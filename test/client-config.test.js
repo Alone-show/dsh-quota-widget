@@ -30,7 +30,7 @@ globalThis.window = {
 
 await import('../client.js')
 
-const { cleanDraft, validateDraft, draftShape, FALLBACK_CATALOG } = plugin.__test
+const { cleanDraft, validateDraft, draftShape, FALLBACK_CATALOG, CSS } = plugin.__test
 
 /**
  * 一份合法草稿。
@@ -256,4 +256,24 @@ test('apply registers the overlay and the bundle config page', () => {
   assert.equal(pageRegistrations[0].spec.key, 'dsh-quota-widget')
   assert.equal(pageRegistrations[0].spec.locale, 'quota-widget')
   assert.equal(typeof pageRegistrations[0].component, 'function')
+})
+
+test('配置表单不用浮层底色，保存栏跟页面背景同色', () => {
+  const rules = CSS.match(/\.qwcfg[^{}]*\{[^{}]*\}/g) ?? []
+  assert.ok(rules.length > 10, '应当解析出配置表单的样式规则')
+  assert.deepEqual(
+    rules.filter((rule) => rule.includes('--dsw-alias-bg-overlay')),
+    [],
+    '配置表单不能把 overlay（深色下 #61666b）当底色',
+  )
+
+  const footer = rules.find((rule) => rule.startsWith('.qwcfg-footer{'))
+  assert.ok(footer !== undefined, '保存栏必须有样式规则')
+  assert.match(footer, /background:var\(--dsw-alias-bg-base\)/)
+
+  // 深色主题下 brand 填充接近白色，主按钮文字必须用宿主的前景色，
+  // 否则会白底白字。
+  const primary = rules.find((rule) => rule.startsWith('.qwcfg-btn-primary{'))
+  assert.ok(primary !== undefined, '主按钮必须有样式规则')
+  assert.match(primary, /color:var\(--dsw-alias-label-primary-foreground\)/)
 })
