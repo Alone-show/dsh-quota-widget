@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "OpenCode Quota",
-    "description": "Shows an expandable floating pill in the corner of the Web UI with the live OpenCode Go quota for the 5-hour, weekly and monthly windows, plus today's token usage. Its opacity is adjustable with the scroll wheel."
+    "title": "Quota widget",
+    "description": "Shows an expandable floating quota and usage widget in the corner of the Web UI, with built-in OpenCode Go, DeepSeek, Anthropic and OpenAI sources plus custom HTTP endpoints. Its opacity is adjustable with the scroll wheel."
   }
 }

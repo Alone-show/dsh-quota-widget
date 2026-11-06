@@ -1,16 +1,18 @@
 {
-  "name": "dsh-opencode-quota",
-  "version": "1.2.0",
+  "name": "dsh-quota-widget",
+  "version": "2.0.0",
   "type": "module",
-  "description": "DSH 插件：在 Web 界面右下角实时显示 OpenCode Go 的 5 小时 / 本周 / 本月额度。",
+  "description": "DSH 插件：在 Web 界面右下角显示可配置的多数据源额度 / 用量浮窗，内置 OpenCode Go、DeepSeek、Anthropic、OpenAI 与通用 HTTP 适配器。",
   "keywords": [
     "dsh",
     "deepseek-harness",
     "dsh-plugin",
-    "opencode",
-    "opencode-go",
     "quota",
-    "usage"
+    "usage",
+    "opencode",
+    "deepseek",
+    "anthropic",
+    "openai"
   ],
   "license": "MIT",
   "exports": {
@@ -22,12 +24,19 @@
   "files": [
     "index.js",
     "client.js",
+    "lib/**/*.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
     "README.md",
     "LICENSE"
   ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.19.0"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -42,10 +51,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Alone-show/opencode-quota.git"
+    "url": "git+https://github.com/Alone-show/dsh-quota-widget.git"
   },
-  "homepage": "https://github.com/Alone-show/opencode-quota#readme",
+  "homepage": "https://github.com/Alone-show/dsh-quota-widget#readme",
   "bugs": {
-    "url": "https://github.com/Alone-show/opencode-quota/issues"
+    "url": "https://github.com/Alone-show/dsh-quota-widget/issues"
   }
 }
