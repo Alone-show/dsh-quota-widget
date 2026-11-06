@@ -8,6 +8,10 @@
  * 数据来自宿主半侧的同源只读路由 `/plugins/quota-widget`（浏览器直接请求上游
  * 会被 CORS 挡掉，且 API Key 不能下发到页面）。
  *
+ * 另外向插件页注册 `plugins.bundle.config`：在「插件 → 已安装插件 →
+ * dsh-quota-widget」里直接编辑 sources / display / cache，保存走 settings 的
+ * volatile 写入，宿主热更新后浮窗立即刷新。没有 settings 的部署只挂浮窗。
+ *
  * 样式只用宿主主题令牌（--dsw-alias-*），深浅色自动跟随；文案走 ctx.locale。
  */
 
@@ -20,12 +24,18 @@ window.__ModuleLoader__.load({
 
     const React = require('react');
     const h = React.createElement;
-    const { useCallback, useEffect, useRef, useState } = React;
+    const { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } = React;
 
     /** 本插件的 locale 命名空间。 */
     const NS = 'quota-widget';
     /** 与宿主 index.js 里的 ROUTE_PATH 保持一致。 */
     const ENDPOINT = '/plugins/quota-widget';
+    /** npm 包名：插件页配置区以它作为 bundle key。 */
+    const BUNDLE_NAME = 'dsh-quota-widget';
+    /** profile 补丁层里的行 id：settings 表单的命名空间。 */
+    const ENTRY_ID = 'quota-widget';
+    /** 保存成功后通知浮窗立即刷新的事件名。 */
+    const REFRESH_EVENT = 'quota-widget:refresh';
     /** 默认轮询间隔；宿主响应里的 display.pollMs 可以覆盖。 */
     const DEFAULT_POLL_MS = 20000;
     /** 浮窗不透明度存在浏览器里的 key。 */
@@ -95,6 +105,86 @@ window.__ModuleLoader__.load({
       'opacity.hint': '透明度 {percent}%',
       'opacity.reset': '恢复默认透明度（100%）',
       'opacity.wheel': '滚轮调整透明度',
+      'action.configure': '配置额度浮窗',
+      'config.title': '配置',
+      'config.description': '修改会写入当前 profile 的补丁层，保存后浮窗立即刷新，不需要重启。',
+      'config.loading': '正在读取配置…',
+      'config.unavailable': '这个部署没有可用的设置服务，无法在面板里编辑；请继续编辑 profile 的 cordis.patch.yml。',
+      'config.readOnly': '当前 profile 不允许表单写入，只能查看。',
+      'config.section.display': '显示',
+      'config.section.sources': '数据源',
+      'config.section.cache': '缓存与超时',
+      'config.display.title': '标题',
+      'config.display.titleHint': '留空用默认标题。',
+      'config.display.placement': '浮窗位置',
+      'config.display.bottomRight': '右下角',
+      'config.display.bottomLeft': '左下角',
+      'config.display.pollMs': '轮询间隔（毫秒）',
+      'config.display.pollMsHint': '最低 5000。',
+      'config.display.showUsage': '显示今日用量',
+      'config.display.pillSource': '收起胶囊的数据源',
+      'config.display.pillSourceHint': '留空自动选择第一个可用源。',
+      'config.display.pillMeter': '收起胶囊的 meter',
+      'config.display.pillMeterHint': '留空按主 meter / 百分比最高选择。',
+      'config.source.enabled': '启用',
+      'config.source.id': '源 ID',
+      'config.source.idHint': '小写字母、数字和连字符，例如 opencode-go。',
+      'config.source.driver': '驱动',
+      'config.source.label': '展示名',
+      'config.source.labelHint': '留空用驱动默认名。',
+      'config.source.credential': '凭据引用',
+      'config.source.credentialHint': '只填凭据名，不填密钥；留空用默认引用 {ref}。',
+      'config.source.baseUrl': '接口根地址',
+      'config.source.baseUrlHint': '留空用默认地址。',
+      'config.source.apiVersion': 'API 版本',
+      'config.source.organization': '组织 ID',
+      'config.source.scale': '数值倍率',
+      'config.source.budget': '月度预算',
+      'config.source.budgetAmount': '金额',
+      'config.source.budgetCurrency': '币种（USD）',
+      'config.source.url': '接口 URL',
+      'config.source.authType': '鉴权方式',
+      'config.source.authBearer': 'Bearer',
+      'config.source.authHeaderMode': '自定义请求头',
+      'config.source.authNone': '无鉴权',
+      'config.source.authHeader': '自定义鉴权头',
+      'config.source.authPrefix': '前缀',
+      'config.source.headers': '请求头（JSON）',
+      'config.source.query': '查询参数（JSON）',
+      'config.source.mapping': '额度映射（JSON）',
+      'config.source.mappingHint': '留空表示上游直接返回标准契约；填写时必须含 meters。',
+      'config.source.advanced': '高级 HTTP 选项',
+      'config.source.add': '添加数据源',
+      'config.source.remove': '删除',
+      'config.source.empty': '还没有数据源；添加一个后保存。',
+      'config.cache.ttlMs': '成功缓存（毫秒）',
+      'config.cache.errorTtlMs': '失败缓存（毫秒）',
+      'config.cache.timeoutMs': '请求超时（毫秒）',
+      'config.save': '保存',
+      'config.saving': '正在保存…',
+      'config.discard': '放弃修改',
+      'config.saved': '已保存，浮窗会立即刷新。',
+      'config.conflict': '配置已在别处被修改。请重新载入后再编辑。',
+      'config.reload': '重新载入',
+      'config.auto': '自动',
+      'config.error.sources': '数据源必须是列表。',
+      'config.error.placement': '位置只能是 bottom-right 或 bottom-left。',
+      'config.error.id': '源 ID 必须匹配 ^[a-z0-9][a-z0-9-]*$。',
+      'config.error.duplicateId': '源 ID 重复。',
+      'config.error.driver': '未知的驱动。',
+      'config.error.credential': '凭据引用必须是 POSIX shell 标识符。',
+      'config.error.urlRequired': '通用 HTTP 源必须填写 URL。',
+      'config.error.urlInvalid': 'URL 必须使用 http 或 https。',
+      'config.error.headerRequired': '鉴权头不能为空。',
+      'config.error.json': 'JSON 格式不正确（需要 JSON 对象）。',
+      'config.error.meters': 'mapping 必须包含 meters。',
+      'config.error.budgetDriver': '只有 Anthropic / OpenAI 成本型源支持预算。',
+      'config.error.budgetAmount': '预算金额必须大于 0。',
+      'config.error.budgetCurrency': '预算币种必须是 USD。',
+      'config.error.min': '不能小于 {min}。',
+      'config.error.number': '请填写数字。',
+      'config.error.pillSource': '引用的源不存在。',
+      'config.error.scale': '倍率必须是数字。',
     };
 
     const en = {
@@ -151,6 +241,86 @@ window.__ModuleLoader__.load({
       'opacity.hint': 'Opacity {percent}%',
       'opacity.reset': 'Reset opacity (100%)',
       'opacity.wheel': 'Scroll to adjust opacity',
+      'action.configure': 'Configure quota widget',
+      'config.title': 'Configuration',
+      'config.description': 'Saving writes the current profile’s patch layer and refreshes the widget immediately; no restart needed.',
+      'config.loading': 'Reading configuration…',
+      'config.unavailable': 'This deployment has no settings service, so the form is unavailable. Keep editing the profile’s cordis.patch.yml.',
+      'config.readOnly': 'This profile does not accept form writes; the values are read-only.',
+      'config.section.display': 'Display',
+      'config.section.sources': 'Sources',
+      'config.section.cache': 'Cache and timeouts',
+      'config.display.title': 'Title',
+      'config.display.titleHint': 'Leave empty for the default title.',
+      'config.display.placement': 'Widget position',
+      'config.display.bottomRight': 'Bottom right',
+      'config.display.bottomLeft': 'Bottom left',
+      'config.display.pollMs': 'Poll interval (ms)',
+      'config.display.pollMsHint': 'Minimum 5000.',
+      'config.display.showUsage': 'Show today’s usage',
+      'config.display.pillSource': 'Pill source',
+      'config.display.pillSourceHint': 'Empty picks the first available source.',
+      'config.display.pillMeter': 'Pill meter',
+      'config.display.pillMeterHint': 'Empty picks the primary or highest-percentage meter.',
+      'config.source.enabled': 'Enabled',
+      'config.source.id': 'Source ID',
+      'config.source.idHint': 'Lowercase letters, digits and dashes, such as opencode-go.',
+      'config.source.driver': 'Driver',
+      'config.source.label': 'Display name',
+      'config.source.labelHint': 'Empty uses the driver’s default name.',
+      'config.source.credential': 'Credential reference',
+      'config.source.credentialHint': 'A reference name, never the secret; empty uses {ref}.',
+      'config.source.baseUrl': 'Base URL',
+      'config.source.baseUrlHint': 'Empty uses the default endpoint.',
+      'config.source.apiVersion': 'API version',
+      'config.source.organization': 'Organization ID',
+      'config.source.scale': 'Value scale',
+      'config.source.budget': 'Monthly budget',
+      'config.source.budgetAmount': 'Amount',
+      'config.source.budgetCurrency': 'Currency (USD)',
+      'config.source.url': 'Endpoint URL',
+      'config.source.authType': 'Authentication',
+      'config.source.authBearer': 'Bearer',
+      'config.source.authHeaderMode': 'Custom header',
+      'config.source.authNone': 'No authentication',
+      'config.source.authHeader': 'Custom auth header',
+      'config.source.authPrefix': 'Prefix',
+      'config.source.headers': 'Headers (JSON)',
+      'config.source.query': 'Query parameters (JSON)',
+      'config.source.mapping': 'Quota mapping (JSON)',
+      'config.source.mappingHint': 'Empty means the upstream already returns the standard contract; otherwise meters is required.',
+      'config.source.advanced': 'Advanced HTTP options',
+      'config.source.add': 'Add source',
+      'config.source.remove': 'Remove',
+      'config.source.empty': 'No sources yet; add one and save.',
+      'config.cache.ttlMs': 'Success cache (ms)',
+      'config.cache.errorTtlMs': 'Failure cache (ms)',
+      'config.cache.timeoutMs': 'Request timeout (ms)',
+      'config.save': 'Save',
+      'config.saving': 'Saving…',
+      'config.discard': 'Discard changes',
+      'config.saved': 'Saved; the widget is refreshing now.',
+      'config.conflict': 'The configuration changed elsewhere. Reload before editing.',
+      'config.reload': 'Reload',
+      'config.auto': 'Auto',
+      'config.error.sources': 'Sources must be a list.',
+      'config.error.placement': 'The position must be bottom-right or bottom-left.',
+      'config.error.id': 'Source ID must match ^[a-z0-9][a-z0-9-]*$.',
+      'config.error.duplicateId': 'Duplicate source ID.',
+      'config.error.driver': 'Unknown driver.',
+      'config.error.credential': 'Credential references must be POSIX shell identifiers.',
+      'config.error.urlRequired': 'A generic HTTP source needs a URL.',
+      'config.error.urlInvalid': 'The URL must use http or https.',
+      'config.error.headerRequired': 'The custom auth header cannot be empty.',
+      'config.error.json': 'Invalid JSON (a JSON object is required).',
+      'config.error.meters': 'mapping must contain meters.',
+      'config.error.budgetDriver': 'Only Anthropic / OpenAI cost sources support a budget.',
+      'config.error.budgetAmount': 'The budget amount must be greater than 0.',
+      'config.error.budgetCurrency': 'The budget currency must be USD.',
+      'config.error.min': 'Must be at least {min}.',
+      'config.error.number': 'Enter a number.',
+      'config.error.pillSource': 'That source does not exist.',
+      'config.error.scale': 'The scale must be a number.',
     };
 
     /** 组件内样式：随组件挂载/卸载，不写 document。 */
@@ -203,6 +373,42 @@ window.__ModuleLoader__.load({
 .qw-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
 .qw-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:13px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l1);font-size:11px;color:var(--dsw-alias-label-secondary)}
 .qw-foot-actions{display:inline-flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
+.qw-head-actions{display:inline-flex;align-items:center;gap:2px;flex:0 0 auto}
+.qwcfg{display:flex;flex-direction:column;gap:14px;font-size:12px;color:var(--dsw-alias-label-primary)}
+.qwcfg *{box-sizing:border-box}
+.qwcfg-head{display:flex;flex-direction:column;gap:2px}
+.qwcfg-title{font-size:13px;font-weight:600;margin:0}
+.qwcfg-desc,.qwcfg-hint,.qwcfg-error,.qwcfg-status{margin:0;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.qwcfg-error,.qwcfg-status-error{color:var(--dsw-alias-state-error-primary)}
+.qwcfg-status-ok{color:var(--dsw-alias-state-success-primary)}
+.qwcfg-section{display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+.qwcfg-section-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.qwcfg-section-title{font-size:12px;font-weight:600;margin:0}
+.qwcfg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.qwcfg-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.qwcfg-label{font-size:11px;font-weight:500;color:var(--dsw-alias-label-secondary)}
+.qwcfg-input,.qwcfg-select,.qwcfg-textarea{width:100%;border:1px solid var(--dsw-alias-border-l1);border-radius:7px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:5px 7px;min-height:28px}
+.qwcfg-textarea{min-height:64px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.45}
+.qwcfg-input:focus-visible,.qwcfg-select:focus-visible,.qwcfg-textarea:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+.qwcfg-input[aria-invalid="true"],.qwcfg-select[aria-invalid="true"],.qwcfg-textarea[aria-invalid="true"]{border-color:var(--dsw-alias-state-error-primary)}
+.qwcfg-check{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}
+.qwcfg-source{display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-overlay)}
+.qwcfg-source-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.qwcfg-source-name{font-size:12px;font-weight:600}
+.qwcfg-subgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.qwcfg-advanced{display:flex;flex-direction:column;gap:10px;padding-top:10px;border-top:1px dashed var(--dsw-alias-border-l1)}
+.qwcfg-advanced summary{font-size:11px;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.qwcfg-footer{position:sticky;bottom:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 0 2px;background:var(--dsw-alias-bg-overlay)}
+.qwcfg-spacer{flex:1 1 auto}
+.qwcfg-btn{height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
+.qwcfg-btn:hover:not(:disabled){border-color:var(--dsw-alias-border-l2)}
+.qwcfg-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+.qwcfg-btn:disabled{opacity:.55;cursor:not-allowed}
+.qwcfg-btn-primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-on-brand,#fff)}
+.qwcfg-btn-ghost{background:transparent}
+.qwcfg-btn-danger{color:var(--dsw-alias-state-error-primary)}
+.qwcfg-notice{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-layer-1);font-size:11px;color:var(--dsw-alias-label-secondary)}
+.qwcfg-notice-actions,.qwcfg-actions{display:flex;gap:8px}
 `;
 
     /**
@@ -598,6 +804,23 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /** 滑杆图标：打开插件页配置。 */
+    function ConfigGlyph() {
+      return h(
+        'svg',
+        { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true', fill: 'none' },
+        h('path', {
+          d: 'M2.5 4h6.2M12.2 4h1.3M2.5 8h1.6M7.4 8h6.1M2.5 12h7.4M12.9 12h.6',
+          stroke: 'currentColor',
+          strokeWidth: 1.3,
+          strokeLinecap: 'round',
+        }),
+        h('circle', { cx: 10.6, cy: 4, r: 1.5, stroke: 'currentColor', strokeWidth: 1.3 }),
+        h('circle', { cx: 5.6, cy: 8, r: 1.5, stroke: 'currentColor', strokeWidth: 1.3 }),
+        h('circle', { cx: 11.4, cy: 12, r: 1.5, stroke: 'currentColor', strokeWidth: 1.3 }),
+      );
+    }
+
     /** 收起态的一条横杠图标。 */
     function ChevronGlyph({ up }) {
       return h(
@@ -662,6 +885,1299 @@ window.__ModuleLoader__.load({
      * @param {object} ctx 客户端根 context。
      * @returns {object} React 组件。
      */
+    /** 宿主 meta 没响应时的兜底驱动器表；正常路径始终用宿主下发的 catalog。 */
+    const FALLBACK_CATALOG = [
+      {
+        id: 'opencode-go',
+        label: 'OpenCode Go',
+        labelKey: 'source.opencode-go',
+        defaultCredential: 'OPENCODE_GO_API_KEY',
+        supportsBudget: false,
+        isHttp: false,
+      },
+      {
+        id: 'deepseek-balance',
+        label: 'DeepSeek',
+        labelKey: 'source.deepseek',
+        defaultCredential: 'DEEPSEEK_API_KEY',
+        supportsBudget: false,
+        isHttp: false,
+      },
+      {
+        id: 'anthropic-usage',
+        label: 'Anthropic',
+        labelKey: 'source.anthropic',
+        defaultCredential: 'ANTHROPIC_ADMIN_KEY',
+        supportsBudget: true,
+        isHttp: false,
+      },
+      {
+        id: 'openai-usage',
+        label: 'OpenAI',
+        labelKey: 'source.openai',
+        defaultCredential: 'OPENAI_ADMIN_KEY',
+        supportsBudget: true,
+        isHttp: false,
+      },
+      {
+        id: 'http',
+        label: 'HTTP',
+        labelKey: 'source.http',
+        defaultCredential: null,
+        supportsBudget: false,
+        isHttp: true,
+      },
+    ];
+
+    /**
+     * 深拷贝 JSON 形状的配置。
+     * @param {unknown} value 任意 JSON 值。
+     * @returns {unknown} 副本。
+     */
+    function cloneJson(value) {
+      return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+    }
+
+    /**
+     * 把配置整理成表单草稿的形状：三个组都保证存在。
+     * @param {Record<string, any> | undefined} value 配置值。
+     * @returns {{ sources: Array<Record<string, any>>, cache: Record<string, any>, display: Record<string, any> }} 草稿。
+     */
+    function draftShape(value) {
+      const next = isObject(value) ? cloneJson(value) : {};
+      if (!Array.isArray(next.sources)) next.sources = [];
+      if (!isObject(next.cache)) next.cache = {};
+      if (!isObject(next.display)) next.display = {};
+      return next;
+    }
+
+    /**
+     * 是否是普通对象（不是数组 / null）。
+     * @param {unknown} value 任意值。
+     * @returns {boolean} 判断结果。
+     */
+    function isObject(value) {
+      return value !== null && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    /**
+     * 安全 trim。
+     * @param {unknown} value 任意值。
+     * @returns {string} 去空白后的字符串；非字符串得到空串。
+     */
+    function trimmed(value) {
+      return typeof value === 'string' ? value.trim() : '';
+    }
+
+    /**
+     * 转数字，失败返回 undefined。
+     * @param {unknown} value 任意值。
+     * @returns {number | undefined} 数字。
+     */
+    function numberOr(value) {
+      if (value === '' || value === null || value === undefined) return undefined;
+      const n = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(n) ? n : undefined;
+    }
+
+    /**
+     * 按 id 找 driver 元信息。
+     * @param {Array<Record<string, any>>} catalog 驱动器表。
+     * @param {unknown} id driver id。
+     * @returns {Record<string, any> | undefined} 元信息。
+     */
+    function driverInfo(catalog, id) {
+      return catalog.find((entry) => entry.id === id);
+    }
+
+    /**
+     * 清洗单个数据源：丢掉空字符串与对当前 driver 无意义的字段，让 schema 默认值生效。
+     * @param {Record<string, any>} source 草稿里的源。
+     * @param {Array<Record<string, any>>} catalog 驱动器表。
+     * @returns {Record<string, any>} 可写入的源。
+     */
+    function cleanSource(source, catalog) {
+      const info = driverInfo(catalog, source.driver);
+      const out = {
+        id: trimmed(source.id),
+        driver: source.driver,
+        enabled: source.enabled !== false,
+      };
+      for (const key of ['label', 'credential', 'baseUrl', 'apiVersion', 'organization']) {
+        const value = trimmed(source[key]);
+        if (value !== '') out[key] = value;
+      }
+      const scale = numberOr(source.scale);
+      if (scale !== undefined && scale !== 1) out.scale = scale;
+      const amount = numberOr(source.budget?.amount);
+      if (info?.supportsBudget && amount !== undefined && amount > 0) {
+        out.budget = { amount, currency: (trimmed(source.budget?.currency) || 'USD').toUpperCase() };
+      }
+      if (info?.isHttp === true) {
+        const url = trimmed(source.url);
+        if (url !== '') out.url = url;
+        const auth = isObject(source.auth) ? source.auth : {};
+        const type = ['bearer', 'header', 'none'].includes(auth.type) ? auth.type : 'bearer';
+        const nextAuth = { type };
+        if (trimmed(auth.header) !== '') nextAuth.header = trimmed(auth.header);
+        if (trimmed(auth.prefix) !== '') nextAuth.prefix = auth.prefix;
+        out.auth = nextAuth;
+        for (const key of ['headers', 'query', 'mapping']) {
+          const value = source[key];
+          if (isObject(value) && Object.keys(value).length > 0) out[key] = cloneJson(value);
+        }
+      }
+      return out;
+    }
+
+    /**
+     * 把草稿规范化成可直接提交的形状。
+     * @param {Record<string, any> | null} draft 草稿。
+     * @param {Array<Record<string, any>>} catalog 驱动器表。
+     * @returns {{ sources: Array<Record<string, any>>, cache: Record<string, any>, display: Record<string, any> }} 规范化配置。
+     */
+    function cleanDraft(draft, catalog) {
+      const sources = Array.isArray(draft?.sources) ? draft.sources.map((source) => cleanSource(source, catalog)) : [];
+      const cache = {};
+      for (const key of ['ttlMs', 'errorTtlMs', 'timeoutMs']) {
+        const n = numberOr(draft?.cache?.[key]);
+        if (n !== undefined) cache[key] = n;
+      }
+      const display = {};
+      const title = trimmed(draft?.display?.title);
+      if (title !== '') display.title = title;
+      const pillSource = trimmed(draft?.display?.pillSource);
+      if (pillSource !== '') display.pillSource = pillSource;
+      const pillMeter = trimmed(draft?.display?.pillMeter);
+      if (pillMeter !== '') display.pillMeter = pillMeter;
+      if (draft?.display?.placement === 'bottom-left') display.placement = 'bottom-left';
+      else display.placement = 'bottom-right';
+      const pollMs = numberOr(draft?.display?.pollMs);
+      if (pollMs !== undefined) display.pollMs = pollMs;
+      display.showUsage = draft?.display?.showUsage !== false;
+      return { sources, cache, display };
+    }
+
+    /**
+     * 客户端校验：与宿主 lib/config.js 的 validateConfig 保持同一套规则。
+     * 这里提前拦住，避免保存后才在入口行报错。
+     * @param {Record<string, any>} draft 草稿。
+     * @param {Array<Record<string, any>>} catalog 驱动器表。
+     * @param {Record<string, boolean>} jsonErrors 本地 JSON 文本域错误。
+     * @returns {Record<string, { key: string, params?: Record<string, unknown> }>} 按路径归类的错误。
+     */
+    function validateDraft(draft, catalog, jsonErrors) {
+      const errors = {};
+      const put = (path, key, params) => {
+        if (!(path in errors)) errors[path] = params === undefined ? { key } : { key, params };
+      };
+      const sources = Array.isArray(draft?.sources) ? draft.sources : [];
+      if (!Array.isArray(draft?.sources)) put('sources', 'config.error.sources');
+
+      const ids = new Set();
+      sources.forEach((source, index) => {
+        const at = (key) => `sources.${index}.${key}`;
+        const id = trimmed(source.id);
+        if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) put(at('id'), 'config.error.id');
+        else if (ids.has(id)) put(at('id'), 'config.error.duplicateId');
+        else ids.add(id);
+
+        const info = driverInfo(catalog, source.driver);
+        if (info === undefined) put(at('driver'), 'config.error.driver');
+
+        const credential = trimmed(source.credential);
+        if (credential !== '' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(credential)) {
+          put(at('credential'), 'config.error.credential');
+        }
+
+        if (source.scale !== undefined && source.scale !== '' && numberOr(source.scale) === undefined) {
+          put(at('scale'), 'config.error.scale');
+        }
+
+        if (info?.isHttp === true) {
+          const url = trimmed(source.url);
+          if (url === '') put(at('url'), 'config.error.urlRequired');
+          else {
+            try {
+              const parsed = new URL(url);
+              if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                put(at('url'), 'config.error.urlInvalid');
+              }
+            } catch {
+              put(at('url'), 'config.error.urlInvalid');
+            }
+          }
+          if (source.auth?.type === 'header' && trimmed(source.auth.header) === '') {
+            put(at('auth.header'), 'config.error.headerRequired');
+          }
+          if (source.mapping !== undefined && !isObject(source.mapping)) {
+            put(at('mapping'), 'config.error.json');
+          } else if (isObject(source.mapping) && !('meters' in source.mapping)) {
+            put(at('mapping'), 'config.error.meters');
+          }
+        }
+
+        if (source.budget !== undefined) {
+          const amount = numberOr(source.budget?.amount);
+          if (info?.supportsBudget !== true) put(at('budget'), 'config.error.budgetDriver');
+          else if (amount === undefined) put(at('budget.amount'), 'config.error.number');
+          else if (!(amount > 0)) put(at('budget.amount'), 'config.error.budgetAmount');
+          else if (String(source.budget?.currency ?? 'USD').toUpperCase() !== 'USD') {
+            put(at('budget.currency'), 'config.error.budgetCurrency');
+          }
+        }
+      });
+
+      const cacheLimits = { ttlMs: 1000, errorTtlMs: 500, timeoutMs: 500 };
+      for (const [key, min] of Object.entries(cacheLimits)) {
+        const n = numberOr(draft?.cache?.[key]);
+        if (n === undefined) put(`cache.${key}`, 'config.error.number');
+        else if (n < min) put(`cache.${key}`, 'config.error.min', { min });
+      }
+
+      const pollMs = numberOr(draft?.display?.pollMs);
+      if (pollMs === undefined) put('display.pollMs', 'config.error.number');
+      else if (pollMs < 5000) put('display.pollMs', 'config.error.min', { min: 5000 });
+
+      if (draft?.display?.placement !== 'bottom-right' && draft?.display?.placement !== 'bottom-left') {
+        put('display.placement', 'config.error.placement');
+      }
+
+      const pillSource = trimmed(draft?.display?.pillSource);
+      if (pillSource !== '' && !ids.has(pillSource)) put('display.pillSource', 'config.error.pillSource');
+
+      for (const path of Object.keys(jsonErrors ?? {})) {
+        errors[path] = { key: 'config.error.json' };
+      }
+      return errors;
+    }
+
+    /**
+     * 错误对象转文案。
+     * @param {{ key: string, params?: Record<string, unknown> } | undefined} error 错误。
+     * @param {Function} t 翻译函数。
+     * @returns {string} 文案。
+     */
+    function errorMessage(error, t) {
+      if (error === undefined) return '';
+      return error.params === undefined ? t(error.key) : t(error.key, error.params);
+    }
+
+    /** 表单里的一个字段：标签 + 控件 + 提示/错误。 */
+    function Field({ id, label, hint, error, t, children }) {
+      return h(
+        'div',
+        { className: 'qwcfg-field' },
+        h('label', { className: 'qwcfg-label', htmlFor: id }, label),
+        children,
+        error !== undefined
+          ? h('p', { className: 'qwcfg-error', role: 'alert' }, errorMessage(error, t))
+          : hint !== undefined
+            ? h('p', { className: 'qwcfg-hint' }, hint)
+            : null,
+      );
+    }
+
+    /** 文本输入。 */
+    function TextInput({ id, value, onChange, placeholder, disabled, invalid, ariaLabel }) {
+      return h('input', {
+        id,
+        className: 'qwcfg-input',
+        type: 'text',
+        value: value ?? '',
+        placeholder: placeholder ?? '',
+        'aria-label': ariaLabel,
+        disabled: disabled === true,
+        'aria-invalid': invalid === true ? 'true' : undefined,
+        onChange: (event) => onChange(event.target.value),
+      });
+    }
+
+    /** 数字输入；空值原样交给上层处理。 */
+    function NumberInput({ id, value, onChange, placeholder, disabled, invalid, min, ariaLabel }) {
+      return h('input', {
+        id,
+        className: 'qwcfg-input',
+        type: 'number',
+        inputMode: 'numeric',
+        step: 'any',
+        min,
+        value: value ?? '',
+        placeholder: placeholder ?? '',
+        'aria-label': ariaLabel,
+        disabled: disabled === true,
+        'aria-invalid': invalid === true ? 'true' : undefined,
+        onChange: (event) => onChange(event.target.value),
+      });
+    }
+
+    /** 下拉选择。 */
+    function SelectInput({ id, value, options, onChange, disabled, invalid }) {
+      return h(
+        'select',
+        {
+          id,
+          className: 'qwcfg-select',
+          value: value ?? '',
+          disabled: disabled === true,
+          'aria-invalid': invalid === true ? 'true' : undefined,
+          onChange: (event) => onChange(event.target.value),
+        },
+        options.map((option) => h('option', { key: option.value, value: option.value }, option.label)),
+      );
+    }
+
+    /** 勾选框。 */
+    function CheckInput({ id, checked, onChange, label, disabled }) {
+      return h(
+        'label',
+        { className: 'qwcfg-check', htmlFor: id },
+        h('input', {
+          id,
+          type: 'checkbox',
+          checked: checked === true,
+          disabled: disabled === true,
+          onChange: (event) => onChange(event.target.checked),
+        }),
+        h('span', null, label),
+      );
+    }
+
+    /** 多行 JSON 文本域。 */
+    function TextAreaInput({ id, value, onChange, disabled, invalid, rows }) {
+      return h('textarea', {
+        id,
+        className: 'qwcfg-textarea',
+        rows: rows ?? 5,
+        spellCheck: false,
+        value: value ?? '',
+        disabled: disabled === true,
+        'aria-invalid': invalid === true ? 'true' : undefined,
+        onChange: (event) => onChange(event.target.value),
+      });
+    }
+
+    /**
+     * 「插件」页里的配置表单：直接读写 settings 里 quota-widget 命名空间的
+     * volatile 字段，保存后由宿主热更新浮窗。
+     * @param {{ t: Function, configForms: { get: (id: string) => object } }} props 页面属性。
+     * @returns {object} React 元素。
+     */
+    function ConfigPage({ t, configForms }) {
+      const form = useMemo(() => configForms.get(ENTRY_ID), [configForms]);
+      const subscribe = useCallback((notify) => form.subscribe(notify), [form]);
+      const snapshot = useSyncExternalStore(subscribe, () => form.getSnapshot());
+
+      const view = snapshot.value;
+      const ready = snapshot.status === 'ready' && isObject(view);
+
+      const [catalog, setCatalog] = useState(FALLBACK_CATALOG);
+      const [draft, setDraft] = useState(() => (ready ? draftShape(view) : null));
+      const [baseline, setBaseline] = useState(() => (ready ? draftShape(view) : null));
+      const [baseRevision, setBaseRevision] = useState(() => (ready ? snapshot.revision : undefined));
+      const [saving, setSaving] = useState(false);
+      const [saved, setSaved] = useState(false);
+      const [failure, setFailure] = useState(null);
+      const [conflict, setConflict] = useState(false);
+      const [jsonText, setJsonText] = useState({});
+      const [jsonErrors, setJsonErrors] = useState({});
+      const dirty =
+        draft !== null &&
+        baseline !== null &&
+        JSON.stringify(cleanDraft(draft, catalog)) !== JSON.stringify(cleanDraft(baseline, catalog));
+      const errors = draft !== null ? validateDraft(draft, catalog, jsonErrors) : {};
+      const invalid = Object.keys(errors).length > 0;
+      const readOnly = !snapshot.writable;
+      const disabled = readOnly || saving;
+
+      // 驱动器元信息来自宿主；拿不到就退回内置表。
+      useEffect(() => {
+        let alive = true;
+        fetch(`${ENDPOINT}?meta=1`, { headers: { accept: 'application/json' }, cache: 'no-store' })
+          .then((response) => (response.ok ? response.json() : null))
+          .then((payload) => {
+            if (!alive) return;
+            if (payload?.ok === true && Array.isArray(payload.catalog) && payload.catalog.length > 0) {
+              setCatalog(payload.catalog);
+            }
+          })
+          .catch(() => {});
+        return () => {
+          alive = false;
+        };
+      }, []);
+
+      // 跟随 Host 快照：没改动时接受外部更新，有改动时只在 revision 变了才报冲突。
+      useEffect(() => {
+        if (!ready) return;
+        if (draft === null || baseline === null) {
+          const next = draftShape(view);
+          setDraft(next);
+          setBaseline(draftShape(view));
+          setBaseRevision(snapshot.revision);
+          setJsonText({});
+          setJsonErrors({});
+          return;
+        }
+        if (conflict) return;
+        if (dirty) {
+          if (snapshot.revision !== baseRevision) setConflict(true);
+          return;
+        }
+        if (snapshot.revision !== baseRevision) {
+          const next = draftShape(view);
+          setDraft(next);
+          setBaseline(draftShape(view));
+          setBaseRevision(snapshot.revision);
+          setJsonText({});
+          setJsonErrors({});
+        }
+      }, [ready, view, snapshot.revision, draft, baseline, dirty, conflict, baseRevision]);
+
+      /** 统一的草稿修改入口。 */
+      const edit = useCallback((mutator) => {
+        setSaved(false);
+        setFailure(null);
+        setDraft((prev) => {
+          if (prev === null) return prev;
+          const next = cloneJson(prev);
+          mutator(next);
+          return next;
+        });
+      }, []);
+
+      /** 改一个源的普通字段；空字符串表示删除，交回 schema 默认值。 */
+      const setSourceField = useCallback(
+        (index, key, value) => {
+          edit((next) => {
+            const source = next.sources[index];
+            if (value === '') delete source[key];
+            else source[key] = value;
+          });
+        },
+        [edit],
+      );
+
+      /** 改源 id，并跟随 display.pillSource 里的旧 id。 */
+      const setSourceId = useCallback(
+        (index, value) => {
+          edit((next) => {
+            const previous = trimmed(next.sources[index].id);
+            next.sources[index].id = value;
+            if (previous !== '' && trimmed(next.display?.pillSource) === previous) {
+              next.display.pillSource = value;
+            }
+          });
+        },
+        [edit],
+      );
+
+      /** 切换 driver：清掉新 driver 不识别的字段，避免保存即报错。 */
+      const setSourceDriver = useCallback(
+        (index, driver) => {
+          setJsonText({});
+          setJsonErrors({});
+          edit((next) => {
+            const source = next.sources[index];
+            source.driver = driver;
+            for (const key of ['budget', 'url', 'headers', 'query', 'mapping', 'auth', 'apiVersion', 'organization']) {
+              delete source[key];
+            }
+          });
+        },
+        [edit],
+      );
+
+      /** 改预算金额；清空等于不配预算，非法值留在草稿里由保存前校验拦下。 */
+      const setBudgetAmount = useCallback(
+        (index, text) => {
+          edit((next) => {
+            const source = next.sources[index];
+            if (trimmed(text) === '') {
+              delete source.budget;
+              return;
+            }
+            source.budget = {
+              ...(isObject(source.budget) ? source.budget : {}),
+              amount: text,
+              currency: trimmed(source.budget?.currency) || 'USD',
+            };
+          });
+        },
+        [edit],
+      );
+
+      /** 改预算币种，只在已经填了金额时保留 budget。 */
+      const setBudgetCurrency = useCallback(
+        (index, value) => {
+          edit((next) => {
+            const source = next.sources[index];
+            if (isObject(source.budget)) source.budget.currency = value;
+          });
+        },
+        [edit],
+      );
+
+      /** 改数值倍率；留空删除，非法值留在草稿里让校验提示。 */
+      const setScale = useCallback(
+        (index, value) => {
+          edit((next) => {
+            const source = next.sources[index];
+            if (trimmed(value) === '') delete source.scale;
+            else source.scale = value;
+          });
+        },
+        [edit],
+      );
+
+      /** 改缓存字段。 */
+      const setCache = useCallback(
+        (key, value) => {
+          edit((next) => {
+            next.cache[key] = value;
+          });
+        },
+        [edit],
+      );
+
+      /** 改显示字段。 */
+      const setDisplay = useCallback(
+        (key, value) => {
+          edit((next) => {
+            next.display[key] = value;
+          });
+        },
+        [edit],
+      );
+
+      /** 添加一个带唯一 id 的源。 */
+      const addSource = useCallback(() => {
+        setJsonText({});
+        setJsonErrors({});
+        edit((next) => {
+          const used = new Set(next.sources.map((source) => trimmed(source.id)));
+          let n = next.sources.length + 1;
+          while (used.has(`source-${n}`)) n += 1;
+          next.sources.push({
+            id: `source-${n}`,
+            driver: catalog[0]?.id ?? 'opencode-go',
+            enabled: true,
+          });
+        });
+      }, [catalog, edit]);
+
+      /** 删除源，并清掉指向它的 pillSource。 */
+      const removeSource = useCallback(
+        (index) => {
+          setJsonText({});
+          setJsonErrors({});
+          edit((next) => {
+            const removed = trimmed(next.sources[index]?.id);
+            next.sources.splice(index, 1);
+            if (removed !== '' && trimmed(next.display?.pillSource) === removed) next.display.pillSource = '';
+          });
+        },
+        [edit],
+      );
+
+      /** JSON 文本域：文本单独保存，只有解析成功才写进草稿。 */
+      const editJson = useCallback(
+        (path, text, applyValue) => {
+          setSaved(false);
+          setFailure(null);
+          setJsonText((prev) => ({ ...prev, [path]: text }));
+          if (trimmed(text) === '') {
+            setJsonErrors((prev) => {
+              const next = { ...prev };
+              delete next[path];
+              return next;
+            });
+            applyValue(undefined);
+            return;
+          }
+          try {
+            const parsed = JSON.parse(text);
+            if (!isObject(parsed)) throw new Error('not an object');
+            setJsonErrors((prev) => {
+              const next = { ...prev };
+              delete next[path];
+              return next;
+            });
+            applyValue(parsed);
+          } catch {
+            setJsonErrors((prev) => ({ ...prev, [path]: true }));
+          }
+        },
+        [],
+      );
+
+      /** 改某个源的 JSON 字段。 */
+      const setSourceJson = useCallback(
+        (index, key, text) => {
+          const path = `sources.${index}.${key}`;
+          editJson(path, text, (value) => {
+            edit((next) => {
+              const source = next.sources[index];
+              if (value === undefined) delete source[key];
+              else source[key] = value;
+            });
+          });
+        },
+        [edit, editJson],
+      );
+
+      /** 放弃草稿，回到最近一次已保存/已载入的值。 */
+      const discard = useCallback(() => {
+        if (baseline === null) return;
+        setDraft(cloneJson(baseline));
+        setJsonText({});
+        setJsonErrors({});
+        setSaved(false);
+        setFailure(null);
+        setConflict(false);
+      }, [baseline]);
+
+      /** 冲突后按 Host 当前值重新载入。 */
+      const reload = useCallback(() => {
+        if (!ready) return;
+        const next = draftShape(view);
+        setDraft(next);
+        setBaseline(draftShape(view));
+        setBaseRevision(snapshot.revision);
+        setJsonText({});
+        setJsonErrors({});
+        setSaved(false);
+        setFailure(null);
+        setConflict(false);
+      }, [ready, view, snapshot.revision]);
+
+      /** 只提交有变化的顶层组。 */
+      const save = useCallback(async () => {
+        if (draft === null || baseline === null || saving || conflict) return;
+        if (Object.keys(validateDraft(draft, catalog, jsonErrors)).length > 0) return;
+        const next = cleanDraft(draft, catalog);
+        const base = cleanDraft(baseline, catalog);
+        const ops = [];
+        if (JSON.stringify(next.sources) !== JSON.stringify(base.sources)) {
+          ops.push({ op: 'set', path: ['sources'], value: next.sources });
+        }
+        if (JSON.stringify(next.cache) !== JSON.stringify(base.cache)) {
+          ops.push({ op: 'set', path: ['cache'], value: next.cache });
+        }
+        if (JSON.stringify(next.display) !== JSON.stringify(base.display)) {
+          ops.push({ op: 'set', path: ['display'], value: next.display });
+        }
+        if (ops.length === 0) {
+          setSaved(true);
+          return;
+        }
+        setSaving(true);
+        setSaved(false);
+        setFailure(null);
+        try {
+          const accepted = await form.mutate(ops, baseRevision);
+          if (!accepted) {
+            setConflict(true);
+            return;
+          }
+          setBaseline(cloneJson(draft));
+          setBaseRevision(snapshot.revision);
+          setSaved(true);
+          window.dispatchEvent(new CustomEvent(REFRESH_EVENT));
+        } catch (error) {
+          setFailure(error instanceof Error ? error.message : String(error));
+        } finally {
+          setSaving(false);
+        }
+      }, [draft, baseline, saving, conflict, catalog, t, jsonErrors, form, baseRevision, snapshot.revision]);
+
+      if (snapshot.status === 'loading' || (ready && draft === null)) {
+        return h(
+          'div',
+          { className: 'qwcfg' },
+          h('style', null, CSS),
+          h('p', { className: 'qwcfg-hint', role: 'status' }, t('config.loading')),
+        );
+      }
+
+      if (!ready) {
+        return h(
+          'div',
+          { className: 'qwcfg' },
+          h('style', null, CSS),
+          h('p', { className: 'qwcfg-hint', role: 'status' }, t('config.unavailable')),
+        );
+      }
+
+      const e = (path) => errors[path];
+      const driverOptions = catalog.map((entry) => ({ value: entry.id, label: t(entry.labelKey) || entry.label }));
+
+      /** 渲染一个字段。 */
+      const field = (id, label, control, hint, error) =>
+        h(Field, { key: id, id, label, hint, error, t }, control);
+
+      /** 渲染一个数据源卡片。 */
+      function renderSource(source, index) {
+        const info = driverInfo(catalog, source.driver);
+        const at = (key) => `sources.${index}.${key}`;
+        const common = [
+          field(
+            `qwcfg-source-${index}-id`,
+            t('config.source.id'),
+            h(TextInput, {
+              id: `qwcfg-source-${index}-id`,
+              value: source.id ?? '',
+              onChange: (value) => setSourceId(index, value),
+              disabled,
+              invalid: e(at('id')) !== undefined,
+            }),
+            t('config.source.idHint'),
+            e(at('id')),
+          ),
+          field(
+            `qwcfg-source-${index}-driver`,
+            t('config.source.driver'),
+            h(SelectInput, {
+              id: `qwcfg-source-${index}-driver`,
+              value: source.driver,
+              options: driverOptions,
+              onChange: (value) => setSourceDriver(index, value),
+              disabled,
+              invalid: e(at('driver')) !== undefined,
+            }),
+            undefined,
+            e(at('driver')),
+          ),
+          field(
+            `qwcfg-source-${index}-label`,
+            t('config.source.label'),
+            h(TextInput, {
+              id: `qwcfg-source-${index}-label`,
+              value: source.label ?? '',
+              onChange: (value) => setSourceField(index, 'label', value),
+              placeholder: info?.label ?? '',
+              disabled,
+            }),
+            t('config.source.labelHint'),
+            undefined,
+          ),
+          field(
+            `qwcfg-source-${index}-credential`,
+            t('config.source.credential'),
+            h(TextInput, {
+              id: `qwcfg-source-${index}-credential`,
+              value: source.credential ?? '',
+              onChange: (value) => setSourceField(index, 'credential', value),
+              placeholder: info?.defaultCredential ?? '',
+              disabled,
+              invalid: e(at('credential')) !== undefined,
+            }),
+            t('config.source.credentialHint', { ref: info?.defaultCredential ?? '—' }),
+            e(at('credential')),
+          ),
+          field(
+            `qwcfg-source-${index}-scale`,
+            t('config.source.scale'),
+            h(NumberInput, {
+              id: `qwcfg-source-${index}-scale`,
+              value: source.scale ?? '',
+              onChange: (value) => setScale(index, value),
+              disabled,
+              invalid: e(at('scale')) !== undefined,
+            }),
+            undefined,
+            e(at('scale')),
+          ),
+        ];
+
+        const specific = [];
+        if (!info?.isHttp) {
+          specific.push(
+            field(
+              `qwcfg-source-${index}-baseUrl`,
+              t('config.source.baseUrl'),
+              h(TextInput, {
+                id: `qwcfg-source-${index}-baseUrl`,
+                value: source.baseUrl ?? '',
+                onChange: (value) => setSourceField(index, 'baseUrl', value),
+                placeholder: info?.defaultBaseUrl ?? '',
+                disabled,
+              }),
+              t('config.source.baseUrlHint'),
+              undefined,
+            ),
+          );
+        }
+        if (source.driver === 'anthropic-usage') {
+          specific.push(
+            field(
+              `qwcfg-source-${index}-apiVersion`,
+              t('config.source.apiVersion'),
+              h(TextInput, {
+                id: `qwcfg-source-${index}-apiVersion`,
+                value: source.apiVersion ?? '',
+                onChange: (value) => setSourceField(index, 'apiVersion', value),
+                disabled,
+              }),
+              undefined,
+              undefined,
+            ),
+          );
+        }
+        if (source.driver === 'openai-usage') {
+          specific.push(
+            field(
+              `qwcfg-source-${index}-organization`,
+              t('config.source.organization'),
+              h(TextInput, {
+                id: `qwcfg-source-${index}-organization`,
+                value: source.organization ?? '',
+                onChange: (value) => setSourceField(index, 'organization', value),
+                disabled,
+              }),
+              undefined,
+              undefined,
+            ),
+          );
+        }
+        if (info?.supportsBudget === true) {
+          specific.push(
+            h(
+              'div',
+              { className: 'qwcfg-field', key: `qwcfg-source-${index}-budget` },
+              h('label', { className: 'qwcfg-label' }, t('config.source.budget')),
+              h(
+                'div',
+                { className: 'qwcfg-subgrid' },
+                h(NumberInput, {
+                  id: `qwcfg-source-${index}-budget-amount`,
+                  value: source.budget?.amount ?? '',
+                  onChange: (value) => setBudgetAmount(index, value),
+                  placeholder: t('config.source.budgetAmount'),
+                  ariaLabel: t('config.source.budgetAmount'),
+                  disabled,
+                  invalid: e(at('budget.amount')) !== undefined || e(at('budget')) !== undefined,
+                }),
+                source.budget === undefined
+                  ? null
+                  : h(TextInput, {
+                      id: `qwcfg-source-${index}-budget-currency`,
+                      value: source.budget.currency ?? 'USD',
+                      onChange: (value) => setBudgetCurrency(index, value),
+                      ariaLabel: t('config.source.budgetCurrency'),
+                      disabled,
+                      invalid: e(at('budget.currency')) !== undefined,
+                    }),
+              ),
+              e(at('budget')) !== undefined || e(at('budget.amount')) !== undefined || e(at('budget.currency')) !== undefined
+                ? h(
+                    'p',
+                    { className: 'qwcfg-error', role: 'alert' },
+                    errorMessage(e(at('budget')) ?? e(at('budget.amount')) ?? e(at('budget.currency')), t),
+                  )
+                : null,
+            ),
+          );
+        }
+
+        let httpBlock = null;
+        if (info?.isHttp === true) {
+          httpBlock = h(
+            'details',
+            { className: 'qwcfg-advanced', open: isObject(source.mapping) || undefined },
+            h('summary', null, t('config.source.advanced')),
+            h(
+              'div',
+              { className: 'qwcfg-subgrid' },
+              field(
+                `qwcfg-source-${index}-url`,
+                t('config.source.url'),
+                h(TextInput, {
+                  id: `qwcfg-source-${index}-url`,
+                  value: source.url ?? '',
+                  onChange: (value) => setSourceField(index, 'url', value),
+                  placeholder: 'https://example.com/quota',
+                  disabled,
+                  invalid: e(at('url')) !== undefined,
+                }),
+                undefined,
+                e(at('url')),
+              ),
+              field(
+                `qwcfg-source-${index}-auth`,
+                t('config.source.authType'),
+                h(SelectInput, {
+                  id: `qwcfg-source-${index}-auth`,
+                  value: source.auth?.type ?? 'bearer',
+                  options: [
+                    { value: 'bearer', label: t('config.source.authBearer') },
+                    { value: 'header', label: t('config.source.authHeaderMode') },
+                    { value: 'none', label: t('config.source.authNone') },
+                  ],
+                  onChange: (value) => {
+                    edit((next) => {
+                      const target = next.sources[index];
+                      target.auth = { ...(isObject(target.auth) ? target.auth : {}), type: value };
+                    });
+                  },
+                  disabled,
+                }),
+              ),
+            ),
+            source.auth?.type === 'header'
+              ? h(
+                  'div',
+                  { className: 'qwcfg-subgrid' },
+                  field(
+                    `qwcfg-source-${index}-auth-header`,
+                    t('config.source.authHeader'),
+                    h(TextInput, {
+                      id: `qwcfg-source-${index}-auth-header`,
+                      value: source.auth?.header ?? '',
+                      onChange: (value) => {
+                        edit((next) => {
+                          const target = next.sources[index];
+                          target.auth = { ...(isObject(target.auth) ? target.auth : {}), header: value };
+                        });
+                      },
+                      placeholder: 'Authorization',
+                      disabled,
+                      invalid: e(at('auth.header')) !== undefined,
+                    }),
+                    undefined,
+                    e(at('auth.header')),
+                  ),
+                  field(
+                    `qwcfg-source-${index}-auth-prefix`,
+                    t('config.source.authPrefix'),
+                    h(TextInput, {
+                      id: `qwcfg-source-${index}-auth-prefix`,
+                      value: source.auth?.prefix ?? '',
+                      onChange: (value) => {
+                        edit((next) => {
+                          const target = next.sources[index];
+                          target.auth = { ...(isObject(target.auth) ? target.auth : {}), prefix: value };
+                        });
+                      },
+                      placeholder: 'Bearer ',
+                      disabled,
+                    }),
+                    undefined,
+                    undefined,
+                  ),
+                )
+              : null,
+            field(
+              `qwcfg-source-${index}-headers`,
+              t('config.source.headers'),
+              h(TextAreaInput, {
+                id: `qwcfg-source-${index}-headers`,
+                value: jsonText[`sources.${index}.headers`] ?? (isObject(source.headers) ? JSON.stringify(source.headers, null, 2) : ''),
+                onChange: (text) => setSourceJson(index, 'headers', text),
+                disabled,
+                invalid: jsonErrors[`sources.${index}.headers`] === true,
+                rows: 3,
+              }),
+              undefined,
+              jsonErrors[`sources.${index}.headers`] === true ? { key: 'config.error.json' } : undefined,
+            ),
+            field(
+              `qwcfg-source-${index}-query`,
+              t('config.source.query'),
+              h(TextAreaInput, {
+                id: `qwcfg-source-${index}-query`,
+                value: jsonText[`sources.${index}.query`] ?? (isObject(source.query) ? JSON.stringify(source.query, null, 2) : ''),
+                onChange: (text) => setSourceJson(index, 'query', text),
+                disabled,
+                invalid: jsonErrors[`sources.${index}.query`] === true,
+                rows: 3,
+              }),
+              undefined,
+              jsonErrors[`sources.${index}.query`] === true ? { key: 'config.error.json' } : undefined,
+            ),
+            field(
+              `qwcfg-source-${index}-mapping`,
+              t('config.source.mapping'),
+              h(TextAreaInput, {
+                id: `qwcfg-source-${index}-mapping`,
+                value: jsonText[`sources.${index}.mapping`] ?? (isObject(source.mapping) ? JSON.stringify(source.mapping, null, 2) : ''),
+                onChange: (text) => setSourceJson(index, 'mapping', text),
+                disabled,
+                invalid: e(at('mapping')) !== undefined || jsonErrors[`sources.${index}.mapping`] === true,
+                rows: 6,
+              }),
+              t('config.source.mappingHint'),
+              jsonErrors[`sources.${index}.mapping`] === true ? { key: 'config.error.json' } : e(at('mapping')),
+            ),
+          );
+        }
+
+        return h(
+          'div',
+          { className: 'qwcfg-source', key: index },
+          h(
+            'div',
+            { className: 'qwcfg-source-head' },
+            h(
+              'span',
+              { className: 'qwcfg-source-name' },
+              `${trimmed(source.id) || '#'}${info === undefined ? '' : ` · ${t(info.labelKey) || info.label}`}`,
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'qwcfg-btn qwcfg-btn-ghost qwcfg-btn-danger',
+                disabled,
+                onClick: () => removeSource(index),
+              },
+              t('config.source.remove'),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'qwcfg-subgrid' },
+            h(
+              'div',
+              { className: 'qwcfg-field' },
+              h(CheckInput, {
+                id: `qwcfg-source-${index}-enabled`,
+                checked: source.enabled !== false,
+                onChange: (checked) => setSourceField(index, 'enabled', checked),
+                label: t('config.source.enabled'),
+                disabled,
+              }),
+            ),
+            ...common,
+          ),
+          specific.length > 0 ? h('div', { className: 'qwcfg-subgrid' }, ...specific) : null,
+          httpBlock,
+        );
+      }
+
+      const pillSourceOptions = [
+        { value: '', label: t('config.auto') },
+        ...draft.sources
+          .filter((source) => trimmed(source.id) !== '')
+          .map((source) => ({ value: trimmed(source.id), label: trimmed(source.id) })),
+      ];
+      if (
+        trimmed(draft.display.pillSource) !== '' &&
+        !pillSourceOptions.some((option) => option.value === trimmed(draft.display.pillSource))
+      ) {
+        pillSourceOptions.push({ value: trimmed(draft.display.pillSource), label: trimmed(draft.display.pillSource) });
+      }
+
+      return h(
+        'div',
+        { className: 'qwcfg' },
+        h('style', null, CSS),
+        h(
+          'div',
+          { className: 'qwcfg-head' },
+          h('h3', { className: 'qwcfg-title' }, t('config.title')),
+          h('p', { className: 'qwcfg-desc' }, t('config.description')),
+        ),
+        readOnly ? h('p', { className: 'qwcfg-hint', role: 'status' }, t('config.readOnly')) : null,
+        conflict
+          ? h(
+              'div',
+              { className: 'qwcfg-notice', role: 'alert' },
+              h('span', null, t('config.conflict')),
+              h(
+                'div',
+                { className: 'qwcfg-actions' },
+                h('button', { type: 'button', className: 'qwcfg-btn', onClick: reload }, t('config.reload')),
+              ),
+            )
+          : null,
+        h(
+          'section',
+          { className: 'qwcfg-section' },
+          h('div', { className: 'qwcfg-section-head' }, h('h4', { className: 'qwcfg-section-title' }, t('config.section.display'))),
+          h(
+            'div',
+            { className: 'qwcfg-grid' },
+            field(
+              'qwcfg-display-title',
+              t('config.display.title'),
+              h(TextInput, {
+                id: 'qwcfg-display-title',
+                value: draft.display.title ?? '',
+                onChange: (value) => setDisplay('title', value),
+                disabled,
+              }),
+              t('config.display.titleHint'),
+              undefined,
+            ),
+            field(
+              'qwcfg-display-placement',
+              t('config.display.placement'),
+              h(SelectInput, {
+                id: 'qwcfg-display-placement',
+                value: draft.display.placement ?? 'bottom-right',
+                options: [
+                  { value: 'bottom-right', label: t('config.display.bottomRight') },
+                  { value: 'bottom-left', label: t('config.display.bottomLeft') },
+                ],
+                onChange: (value) => setDisplay('placement', value),
+                disabled,
+                invalid: e('display.placement') !== undefined,
+              }),
+              undefined,
+              e('display.placement'),
+            ),
+            field(
+              'qwcfg-display-pollMs',
+              t('config.display.pollMs'),
+              h(NumberInput, {
+                id: 'qwcfg-display-pollMs',
+                value: draft.display.pollMs ?? '',
+                onChange: (value) => setDisplay('pollMs', value),
+                min: 5000,
+                disabled,
+                invalid: e('display.pollMs') !== undefined,
+              }),
+              t('config.display.pollMsHint'),
+              e('display.pollMs'),
+            ),
+            field(
+              'qwcfg-display-pillSource',
+              t('config.display.pillSource'),
+              h(SelectInput, {
+                id: 'qwcfg-display-pillSource',
+                value: draft.display.pillSource ?? '',
+                options: pillSourceOptions,
+                onChange: (value) => setDisplay('pillSource', value),
+                disabled,
+                invalid: e('display.pillSource') !== undefined,
+              }),
+              t('config.display.pillSourceHint'),
+              e('display.pillSource'),
+            ),
+            field(
+              'qwcfg-display-pillMeter',
+              t('config.display.pillMeter'),
+              h(TextInput, {
+                id: 'qwcfg-display-pillMeter',
+                value: draft.display.pillMeter ?? '',
+                onChange: (value) => setDisplay('pillMeter', value),
+                disabled,
+              }),
+              t('config.display.pillMeterHint'),
+              undefined,
+            ),
+            h(
+              'div',
+              { className: 'qwcfg-field' },
+              h('span', { className: 'qwcfg-label' }, t('config.display.showUsage')),
+              h(CheckInput, {
+                id: 'qwcfg-display-showUsage',
+                checked: draft.display.showUsage !== false,
+                onChange: (checked) => setDisplay('showUsage', checked),
+                label: t('config.display.showUsage'),
+                disabled,
+              }),
+            ),
+          ),
+        ),
+        h(
+          'section',
+          { className: 'qwcfg-section' },
+          h(
+            'div',
+            { className: 'qwcfg-section-head' },
+            h('h4', { className: 'qwcfg-section-title' }, t('config.section.sources')),
+            h(
+              'button',
+              { type: 'button', className: 'qwcfg-btn', disabled, onClick: addSource },
+              t('config.source.add'),
+            ),
+          ),
+          draft.sources.length === 0
+            ? h('p', { className: 'qwcfg-hint' }, t('config.source.empty'))
+            : draft.sources.map((source, index) => renderSource(source, index)),
+        ),
+        h(
+          'section',
+          { className: 'qwcfg-section' },
+          h('div', { className: 'qwcfg-section-head' }, h('h4', { className: 'qwcfg-section-title' }, t('config.section.cache'))),
+          h(
+            'div',
+            { className: 'qwcfg-grid' },
+            field(
+              'qwcfg-cache-ttlMs',
+              t('config.cache.ttlMs'),
+              h(NumberInput, {
+                id: 'qwcfg-cache-ttlMs',
+                value: draft.cache.ttlMs ?? '',
+                onChange: (value) => setCache('ttlMs', value),
+                min: 1000,
+                disabled,
+                invalid: e('cache.ttlMs') !== undefined,
+              }),
+              undefined,
+              e('cache.ttlMs'),
+            ),
+            field(
+              'qwcfg-cache-errorTtlMs',
+              t('config.cache.errorTtlMs'),
+              h(NumberInput, {
+                id: 'qwcfg-cache-errorTtlMs',
+                value: draft.cache.errorTtlMs ?? '',
+                onChange: (value) => setCache('errorTtlMs', value),
+                min: 500,
+                disabled,
+                invalid: e('cache.errorTtlMs') !== undefined,
+              }),
+              undefined,
+              e('cache.errorTtlMs'),
+            ),
+            field(
+              'qwcfg-cache-timeoutMs',
+              t('config.cache.timeoutMs'),
+              h(NumberInput, {
+                id: 'qwcfg-cache-timeoutMs',
+                value: draft.cache.timeoutMs ?? '',
+                onChange: (value) => setCache('timeoutMs', value),
+                min: 500,
+                disabled,
+                invalid: e('cache.timeoutMs') !== undefined,
+              }),
+              undefined,
+              e('cache.timeoutMs'),
+            ),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'qwcfg-footer' },
+          saved ? h('span', { className: 'qwcfg-status qwcfg-status-ok', role: 'status' }, t('config.saved')) : null,
+          failure !== null
+            ? h('span', { className: 'qwcfg-status qwcfg-status-error', role: 'alert' }, failure)
+            : null,
+          h('span', { className: 'qwcfg-spacer' }),
+          h(
+            'button',
+            { type: 'button', className: 'qwcfg-btn qwcfg-btn-ghost', disabled: !dirty || saving, onClick: discard },
+            t('config.discard'),
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'qwcfg-btn qwcfg-btn-primary',
+              disabled: !dirty || invalid || saving || conflict || disabled,
+              onClick: () => {
+                void save();
+              },
+            },
+            saving ? t('config.saving') : t('config.save'),
+          ),
+        ),
+      );
+    }
+
     function defineWidget(ctx) {
       /** 额度浮窗组件。 */
       function QuotaWidget() {
@@ -676,6 +2192,8 @@ window.__ModuleLoader__.load({
 
         const localeId = ctx.locale.getSnapshot().active;
         const t = ctx.locale.bind(NS);
+        /** 插件页的跨插件导航；没有权限/没有插件页时隐藏齿轮。 */
+        const navigation = ctx.get('pluginNavigation');
 
         /** 浮窗不透明度：整块一起淡化，默认 100%。 */
         const [opacity, setOpacity] = useState(readStoredOpacity);
@@ -786,6 +2304,15 @@ window.__ModuleLoader__.load({
           };
           document.addEventListener('visibilitychange', onVisible);
           return () => document.removeEventListener('visibilitychange', onVisible);
+        }, [load]);
+
+        // 配置页保存后立即刷新，不必等下一轮轮询。
+        useEffect(() => {
+          const onRefresh = () => {
+            void load(true);
+          };
+          window.addEventListener(REFRESH_EVENT, onRefresh);
+          return () => window.removeEventListener(REFRESH_EVENT, onRefresh);
         }, [load]);
 
         // 展开时：点外部或按 Escape 收起。
@@ -985,15 +2512,32 @@ window.__ModuleLoader__.load({
                     : null,
                   ),
                   h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: 'qw-icon',
-                      title: t('action.collapse'),
-                      'aria-label': t('action.collapse'),
-                      onClick: () => setOpen(false),
-                    },
-                    h(ChevronGlyph, { up: false }),
+                    'div',
+                    { className: 'qw-head-actions' },
+                    navigation === undefined
+                      ? null
+                      : h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'qw-icon',
+                            title: t('action.configure'),
+                            'aria-label': t('action.configure'),
+                            onClick: () => navigation.openBundle(BUNDLE_NAME),
+                          },
+                          h(ConfigGlyph),
+                        ),
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'qw-icon',
+                        title: t('action.collapse'),
+                        'aria-label': t('action.collapse'),
+                        onClick: () => setOpen(false),
+                      },
+                      h(ChevronGlyph, { up: false }),
+                    ),
                   ),
                 ),
                 renderBody(),
@@ -1044,7 +2588,7 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'locale'];
 
     /**
-     * 往 shell.overlay 注册浮窗。
+     * 往 shell.overlay 注册浮窗，并在 settings 可用时向插件页注册配置表单。
      * @param {object} ctx 客户端根 context。
      */
     function apply(ctx) {
@@ -1060,11 +2604,32 @@ window.__ModuleLoader__.load({
           QuotaWidget,
         ),
       );
+
+      // 配置表单依赖 settings 的 configForms；没有它的部署只挂浮窗。
+      ctx.inject(['configForms'], (scope) => {
+        scope.effect(
+          () =>
+            scope.slots.inject('plugins.bundle.config', () =>
+              scope.slots.register(
+                {
+                  name: 'plugins.bundle.config',
+                  key: BUNDLE_NAME,
+                  locale: NS,
+                },
+                (props) => h(ConfigPage, { t: props.t, configForms: scope.configForms }),
+              ),
+            ),
+          'quota-widget: 插件页配置',
+        );
+      });
+
       console.info('[quota-widget] floating quota widget ready');
     }
 
     exports.apply = apply;
     exports.inject = inject;
+    // 纯函数给 Node 单测用；Loader 不读这些额外导出。
+    exports.__test = { cleanDraft, validateDraft, draftShape, FALLBACK_CATALOG };
     return module.exports;
   },
 });

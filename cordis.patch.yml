@@ -5,8 +5,9 @@
 # 浏览器半侧（client.js）由 dsh-client-modules 依据 package.json 的
 # dsh.client 声明下发，往 shell.overlay 里挂一个可展开的多源额度浮窗。
 #
-# 配置写在 profile 的 cordis.patch.yml 里（同 id 覆盖），最小可用配置只需要
-# OPENCODE_GO_API_KEY；多数据源示例见 README。
+# 配置有两个等价入口：浏览器「插件 → 已安装插件 → dsh-quota-widget」里的配置表单，
+# 或 profile 的 cordis.patch.yml（同 id 覆盖）。两者写的是同一条 config 覆盖项；
+# 最小可用配置只需要 OPENCODE_GO_API_KEY，多数据源示例见 README。
 - insert:
     - id: quota-widget
       name: 'dsh-quota-widget'

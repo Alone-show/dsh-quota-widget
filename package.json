@@ -1,6 +1,6 @@
 {
   "name": "dsh-quota-widget",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "module",
   "description": "DSH 插件：在 Web 界面右下角显示可配置的多数据源额度 / 用量浮窗，内置 OpenCode Go、DeepSeek、Anthropic、OpenAI 与通用 HTTP 适配器。",
   "keywords": [

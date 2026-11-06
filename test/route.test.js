@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { apply } from '../index.js'
+import { Config } from '../lib/config.js'
 import { localDateKey } from '../lib/quota.js'
 import { opencodeResponses } from './helpers.js'
 
@@ -13,6 +14,7 @@ const today = localDateKey(now)
  */
 function createContext() {
   let handler
+  const listeners = new Map()
   const ctx = {
     credentials: {
       resolve: async (ref) => (ref === 'MISSING' ? undefined : { value: `value-${ref}` }),
@@ -27,8 +29,17 @@ function createContext() {
       const cleanup = fn()
       return typeof cleanup === 'function' ? cleanup : () => {}
     },
+    on(event, listener) {
+      listeners.set(event, listener)
+      return () => listeners.delete(event)
+    },
   }
   Object.defineProperty(ctx, 'handler', { get: () => handler })
+  Object.defineProperty(ctx, 'volatileUpdate', {
+    get: () => () => {
+      listeners.get('loader/volatile-update')?.()
+    },
+  })
   return ctx
 }
 
@@ -225,6 +236,153 @@ test('no enabled sources returns a no-sources payload', async () => {
     assert.equal(payload.ok, false)
     assert.equal(payload.error.code, 'no-sources')
     assert.deepEqual(payload.sources, [])
+  } finally {
+    restore()
+  }
+})
+
+test('meta mode returns the driver catalog without touching upstream', async () => {
+  const restore = installFetch(async () => {
+    throw new Error('should not fetch')
+  })
+  try {
+    const ctx = createContext()
+    apply(ctx, { sources: [] })
+
+    const response = await callRoute(ctx.handler, { url: '/plugins/quota-widget?meta=1' })
+    assert.equal(response.status, 200)
+    const payload = JSON.parse(response.body)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.catalog.length, 5)
+    assert.equal(payload.catalog[0].id, 'opencode-go')
+    assert.equal(payload.catalog.find((entry) => entry.id === 'http').isHttp, true)
+
+    const head = await callRoute(ctx.handler, { method: 'HEAD', url: '/plugins/quota-widget?meta=1' })
+    assert.equal(head.status, 200)
+    assert.equal(head.body, '')
+  } finally {
+    restore()
+  }
+})
+
+test('a volatile update rebuilds sources and display without re-registering the route', async () => {
+  const responses = opencodeResponses(today)
+  let balanceCount = 0
+  const restore = installFetch(async (url) => {
+    const text = String(url)
+    if (text.endsWith('/go/status')) return jsonResponse(responses.status)
+    if (text.endsWith('/activity/go')) return jsonResponse(responses.activity)
+    if (text.endsWith('/user/balance')) {
+      balanceCount += 1
+      return jsonResponse({
+        is_available: true,
+        balance_infos: [{ currency: 'CNY', total_balance: '88.00' }],
+      })
+    }
+    throw new Error(`unexpected url ${text}`)
+  })
+  try {
+    const ctx = createContext()
+    const config = { sources: [{ id: 'o', driver: 'opencode-go', credential: 'TEST_KEY' }] }
+    apply(ctx, config)
+
+    const first = JSON.parse((await callRoute(ctx.handler)).body)
+    assert.equal(first.sources[0].driver, 'opencode-go')
+    assert.equal(first.display.placement, 'bottom-right')
+
+    config.sources = [{ id: 'balance', driver: 'deepseek-balance', credential: 'OTHER_KEY' }]
+    config.display = { title: '余额', placement: 'bottom-left', pollMs: 30000 }
+    ctx.volatileUpdate()
+
+    const second = JSON.parse((await callRoute(ctx.handler)).body)
+    assert.equal(second.sources.length, 1)
+    assert.equal(second.sources[0].driver, 'deepseek-balance')
+    assert.equal(second.sources[0].meters[0].value, 88)
+    assert.equal(second.display.title, '余额')
+    assert.equal(second.display.placement, 'bottom-left')
+    assert.equal(second.display.pollMs, 30000)
+    assert.equal(balanceCount, 1)
+  } finally {
+    restore()
+  }
+})
+
+test('an invalid volatile update keeps the previous runtime', async () => {
+  const upstream = opencodeFetch()
+  const restore = installFetch(upstream.fetch)
+  try {
+    const ctx = createContext()
+    const config = { sources: [{ id: 'o', driver: 'opencode-go', credential: 'TEST_KEY' }] }
+    apply(ctx, config)
+
+    const first = JSON.parse((await callRoute(ctx.handler)).body)
+    assert.equal(first.sources[0].ok, true)
+
+    config.sources = [
+      { id: 'dup', driver: 'opencode-go' },
+      { id: 'dup', driver: 'deepseek-balance' },
+    ]
+    ctx.volatileUpdate()
+
+    const second = JSON.parse(
+      (await callRoute(ctx.handler, { url: '/plugins/quota-widget?force=1' })).body,
+    )
+    assert.equal(second.sources.length, 1)
+    assert.equal(second.sources[0].id, 'o')
+    assert.equal(second.sources[0].ok, true)
+  } finally {
+    restore()
+  }
+})
+
+test('apply accepts the volatile references the Loader passes to a plugin', async () => {
+  const upstream = opencodeFetch()
+  const restore = installFetch(upstream.fetch)
+  try {
+    const ctx = createContext()
+    // Loader 传给 apply 的是带 .get() 的 volatile 引用，不是普通数组/对象。
+    const parsed = Config({ sources: [{ id: 'o', driver: 'opencode-go', credential: 'TEST_KEY' }] })
+    assert.equal(typeof parsed.sources.get, 'function')
+    apply(ctx, parsed)
+
+    const payload = JSON.parse((await callRoute(ctx.handler)).body)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.sources.length, 1)
+    assert.equal(payload.sources[0].ok, true)
+    assert.equal(payload.display.pollMs, 20000)
+  } finally {
+    restore()
+  }
+})
+
+test('a committed volatile reference drives the next request', async () => {
+  const write = Symbol.for('cosmokit.volatile.write')
+  const restore = installFetch(async (url) => {
+    const text = String(url)
+    if (text.endsWith('/user/balance')) {
+      return jsonResponse({ is_available: true, balance_infos: [{ currency: 'USD', total_balance: '12.50' }] })
+    }
+    throw new Error(`unexpected url ${text}`)
+  })
+  try {
+    const ctx = createContext()
+    const parsed = Config({ sources: [{ id: 'balance', driver: 'deepseek-balance', credential: 'TEST_KEY' }] })
+    apply(ctx, parsed)
+
+    const first = JSON.parse((await callRoute(ctx.handler)).body)
+    assert.equal(first.sources[0].meters[0].value, 12.5)
+
+    // Loader 的 volatile 提交就是原地改写引用；事件随后到达。
+    parsed.sources[write]([{ id: 'balance', driver: 'deepseek-balance', credential: 'TEST_KEY', baseUrl: 'https://example.com' }])
+    parsed.display[write]({ title: '新标题', placement: 'bottom-left', pollMs: 30000, showUsage: false })
+    ctx.volatileUpdate()
+
+    const second = JSON.parse((await callRoute(ctx.handler)).body)
+    assert.equal(second.display.title, '新标题')
+    assert.equal(second.display.placement, 'bottom-left')
+    assert.equal(second.display.pollMs, 30000)
+    assert.equal(second.display.showUsage, false)
+    assert.equal(second.sources[0].driver, 'deepseek-balance')
   } finally {
     restore()
   }

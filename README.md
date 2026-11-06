@@ -52,12 +52,18 @@
 不写任何配置时，插件只启用 OpenCode Go，并使用凭据 `OPENCODE_GO_API_KEY`。如果 DSH 已经在
 用 `opencode-go` 模型路由，这份 key 通常已经在凭据里了，装完直接可用。
 
-要加别的数据源，按下节写 `sources` 即可。
+要加别的数据源，可以直接在插件页的配置表单里加，也可以按下一节写 `sources`。
 
 ## 配置
 
-配置写在 profile 的补丁层 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里，用同一个 id
-覆盖插件行：
+有两个入口，写的是**同一份**配置：
+
+1. **插件页（推荐）**：侧栏「插件 → 已安装插件 → dsh-quota-widget」，在组合包详情里直接
+   编辑显示、数据源、缓存与超时。数据源卡片可以增删、切换驱动、改凭据引用；通用 HTTP 的
+   `headers` / `query` / `mapping` 用 JSON 文本域编辑，格式不对会当场拦下。点保存后配置
+   写入 profile 补丁层，浮窗立即刷新，不需要重启。
+2. **YAML**：脚本化部署或代码审查时，直接写 profile 的补丁层
+   `~/.dsh/profiles/<profile>/cordis.patch.yml`，用同一个 id 覆盖插件行：
 
 ```yaml
 - id: quota-widget
@@ -65,6 +71,11 @@
   config:
     ...
 ```
+
+两种方式等价：面板保存的就是同一条 `config:` 覆盖项，字段名和默认值完全相同。
+
+> 面板只在插件行处于活动状态、且当前 profile 允许写补丁层时出现。若这份配置被 home
+> patch 或命令行 overlay 覆盖，保存会被拒绝，需要回到对应的 YAML 层修改。
 
 ### 完整示例
 
@@ -425,12 +436,17 @@ GET /plugins/quota-widget?force=1  跳过缓存，强制刷新（浮窗里的刷
 | 数字比控制台晚一点 | 宿主缓存 12 秒 + 前端 20 秒轮询，属正常；点刷新按钮可立即取 |
 | 滚轮没反应 / 页面跟着滚 | 滚轮只在收起胶囊上调整透明度；展开面板正常滚动 |
 | 浮窗被调得太淡 | 点浮出提示恢复 100%，或向上滚回去；下限 25% 保证还能看见 |
+| 插件页里没有配置区 | 确认当前 profile 组合包含 `settings` / `config-editor`；从 GitHub 更新插件后需要重新安装到 profile 并重启宿主，客户端再刷新页面 |
+| 面板保存被拒绝 | 配置被 home patch 或命令行 overlay 覆盖，或 profile 不允许写补丁层；改用对应 YAML 层 |
+| 面板里改了但浮窗没变 | 保存成功后会在下一轮轮询生效；面板会在保存后立即触发一次刷新，若仍不变看浏览器控制台与宿主日志 |
 
 调试接口：
 
 ```bash
 curl -s http://127.0.0.1:3080/plugins/quota-widget | jq
 curl -s 'http://127.0.0.1:3080/plugins/quota-widget?force=1' | jq
+# 配置页用的驱动元信息；不触发任何上游请求
+curl -s 'http://127.0.0.1:3080/plugins/quota-widget?meta=1' | jq
 ```
 
 ## 开发与测试
@@ -441,7 +457,7 @@ npm test
 node --check index.js client.js lib/*.js lib/adapters/*.js test/*.js
 ```
 
-测试用 Node 内置 `node:test`，覆盖路径解析、meter 归一化、配置校验、五个适配器和路由缓存。
+测试用 Node 内置 `node:test`，覆盖路径解析、meter 归一化、配置校验（含配置页的草稿清洗/校验）、五个适配器、路由缓存与 volatile 热更新。
 
 改插件代码时：客户端会热替换；**宿主侧** `index.js` / `lib/` 的改动需要在插件页把本插件
 「停用 → 启用」一次。
