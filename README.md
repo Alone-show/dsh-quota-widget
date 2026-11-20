@@ -4,7 +4,7 @@
 可展开的额度浮窗。
 
 收起时是右下角一枚小胶囊，显示配置指定的数据源和它的关键额度；点开后按数据源分组列出
-全部额度窗口、重置倒计时和今日用量。内置 **OpenCode Go**、**DeepSeek 余额**、
+各源能提供的额度窗口、重置倒计时和今日用量。内置 **OpenCode Go**、**DeepSeek 余额**、
 **Anthropic 组织用量**、**OpenAI 组织用量**，以及一个按字段映射配置的 **通用 HTTP** 适配器。
 
 
@@ -221,13 +221,16 @@
 
 ### `opencode-go`
 
-- 并发读取 `GET {baseUrl}/go/status` 与 `GET {baseUrl}/activity/go`，Bearer 认证。
-- 三个窗口：`fiveHour` / `week` / `month`，单位 USD；收起态默认取 `month`。
-- `access.meters` 里的 `limitMicroCents` / `usedMicroCents`（1e-8 美元）换算成美元后算百分比；
-  界面只显示百分比，不显示金额。
-- 今日 tokens / 请求数 / 成本来自按天汇总里日期等于今天的一条。
-- 非 Go 订阅显示 `non-go` 提示，仍保留今日用量。
-- 默认 `baseUrl = https://opencode.ai/console/api`。
+- 读取 `GET {baseUrl}/usage`，Bearer 认证；默认
+  `baseUrl = https://opencode.ai/inference/go/v1`。
+- 三个窗口：`usage.rolling` / `usage.weekly` / `usage.monthly` → `fiveHour` / `week` /
+  `month`，单位 percent；收起态默认取 `month`。
+- 百分比直接来自接口（接口里 `1` 表示 1%），带各自的 `resetsAt`；界面只显示百分比。
+- 公开用量接口没有按天的 tokens / 请求数 / 成本，也没有套餐名，所以这个源不显示今日用量
+  和套餐到期日。
+- 旧版请求的 `/console/api/go/status` + `/activity/go` 是 Console 网页会话接口，裸
+  `oc_sk_` key 会 403；不要再把 `baseUrl` 指回那里。
+- 非 Go 订阅或 key 失效时由上游返回 401/403，插件按 `credential-rejected` 提示。
 
 ### `deepseek-balance`
 
@@ -416,7 +419,7 @@ GET /plugins/quota-widget?force=1  跳过缓存，强制刷新（浮窗里的刷
 
 - **收起态**：胶囊显示选中的数据源和关键额度，左侧小圆环是进度；颜色随水位变化
   （<70% 品牌色，<90% 警告色，其余错误色）。
-- **展开态**：点胶囊展开面板，按源分组显示 meters、重置倒计时、套餐到期日和今日用量；
+- **展开态**：点胶囊展开面板，按源分组显示 meters、重置倒计时、套餐到期日，以及该源能提供的今日用量；
   底部有更新时间和刷新按钮。
 - **收起面板**：点浮窗外面、按 `Escape`，或点面板右上角的收起按钮。
 - **调透明度**：鼠标停在收起胶囊上滚动滚轮，向上更不透明、向下更透明；每档 5%，

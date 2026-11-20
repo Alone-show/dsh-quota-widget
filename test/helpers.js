@@ -32,42 +32,27 @@ export function rejected() {
 }
 
 /**
- * 默认的 OpenCode status / activity 返回体。
- * @param {string} today 本地日期。
- * @returns {{ status: Record<string, any>, activity: Record<string, any> }} 两个响应。
+ * 默认的 OpenCode 公开用量返回体。
+ * @returns {{ usage: Record<string, any> }} 响应。
  */
-export function opencodeResponses(today) {
+export function opencodeUsage() {
   return {
-    status: {
-      product: 'go',
-      access: {
-        startsAt: '2026-10-20T04:00:05.000Z',
-        endsAt: '2026-11-20T04:00:05.000Z',
-        meters: {
-          fiveHour: {
-            limitMicroCents: '1200000000',
-            usedMicroCents: '232000000',
-            startsAt: '2026-11-06T02:00:00.000Z',
-            resetsAt: '2026-11-06T07:00:00.000Z',
-          },
-          week: {
-            limitMicroCents: '3000000000',
-            usedMicroCents: '827000000',
-            resetsAt: '2026-11-13T00:00:00.000Z',
-          },
-          month: {
-            limitMicroCents: '6000000000',
-            usedMicroCents: '1150000000',
-            resetsAt: '2026-11-20T04:00:05.000Z',
-          },
-        },
+    usage: {
+      rolling: {
+        status: 'ok',
+        percent: 12,
+        resetsAt: '2026-11-06T07:00:00.000Z',
       },
-      cancelAtPeriodEnd: false,
-    },
-    activity: {
-      daily: [
-        { date: today, totalTokens: 168885802, totalRequests: 1100, totalCostMicroCents: '293000000' },
-      ],
+      weekly: {
+        status: 'ok',
+        percent: 34,
+        resetsAt: '2026-11-13T00:00:00.000Z',
+      },
+      monthly: {
+        status: 'ok',
+        percent: 19.166666666666668,
+        resetsAt: '2026-11-20T04:00:05.000Z',
+      },
     },
   }
 }

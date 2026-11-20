@@ -122,7 +122,7 @@ test('driverCatalog describes every driver exactly once', () => {
   assert.equal(opencode.label, 'OpenCode Go')
   assert.equal(opencode.labelKey, 'source.opencode-go')
   assert.equal(opencode.defaultCredential, 'OPENCODE_GO_API_KEY')
-  assert.equal(opencode.defaultBaseUrl, 'https://opencode.ai/console/api')
+  assert.equal(opencode.defaultBaseUrl, 'https://opencode.ai/inference/go/v1')
   assert.equal(opencode.supportsBudget, false)
   assert.equal(opencode.isHttp, false)
 

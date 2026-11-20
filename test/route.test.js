@@ -2,11 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { apply } from '../index.js'
 import { Config } from '../lib/config.js'
-import { localDateKey } from '../lib/quota.js'
-import { opencodeResponses } from './helpers.js'
-
-const now = new Date('2026-11-06T04:00:00Z')
-const today = localDateKey(now)
+import { opencodeUsage } from './helpers.js'
 
 /**
  * 假宿主 context：捕获路由 handler。
@@ -97,15 +93,14 @@ function jsonResponse(body) {
  * @returns {{ fetch: (url: string) => Promise<Response>, count: () => number }} 上游。
  */
 function opencodeFetch() {
-  const responses = opencodeResponses(today)
+  const body = opencodeUsage()
   let count = 0
   return {
     count: () => count,
     fetch: async (url) => {
       count += 1
       const text = String(url)
-      if (text.endsWith('/go/status')) return jsonResponse(responses.status)
-      if (text.endsWith('/activity/go')) return jsonResponse(responses.activity)
+      if (text.endsWith('/usage')) return jsonResponse(body)
       throw new Error(`unexpected url ${text}`)
     },
   }
@@ -128,13 +123,13 @@ test('route serves GET/HEAD and caches until force=1', async () => {
     assert.equal(payload.sources[0].meters.length, 3)
     assert.equal(first.body.includes('value-TEST_KEY'), false)
     assert.equal(first.body.includes('authorization'), false)
-    assert.equal(upstream.count(), 2)
+    assert.equal(upstream.count(), 1)
 
     await callRoute(ctx.handler)
-    assert.equal(upstream.count(), 2)
+    assert.equal(upstream.count(), 1)
 
     await callRoute(ctx.handler, { url: '/plugins/quota-widget?force=1' })
-    assert.equal(upstream.count(), 4)
+    assert.equal(upstream.count(), 2)
 
     const head = await callRoute(ctx.handler, { method: 'HEAD' })
     assert.equal(head.status, 200)
@@ -185,13 +180,12 @@ test('one failing source does not hide the healthy one', async () => {
 })
 
 test('route reads multiple sources and carries display preferences', async () => {
-  const responses = opencodeResponses(today)
+  const usage = opencodeUsage()
   let count = 0
   const restore = installFetch(async (url) => {
     count += 1
     const text = String(url)
-    if (text.endsWith('/go/status')) return jsonResponse(responses.status)
-    if (text.endsWith('/activity/go')) return jsonResponse(responses.activity)
+    if (text.endsWith('/usage')) return jsonResponse(usage)
     if (text.endsWith('/user/balance')) {
       return jsonResponse({
         is_available: true,
@@ -218,7 +212,7 @@ test('route reads multiple sources and carries display preferences', async () =>
     assert.equal(payload.display.pillMeter, 'balance-cny')
     assert.equal(payload.sources[1].meters[0].key, 'balance-cny')
     assert.equal(payload.sources[1].meters[0].value, 110)
-    assert.equal(count, 3)
+    assert.equal(count, 2)
   } finally {
     restore()
   }
@@ -266,12 +260,11 @@ test('meta mode returns the driver catalog without touching upstream', async () 
 })
 
 test('a volatile update rebuilds sources and display without re-registering the route', async () => {
-  const responses = opencodeResponses(today)
+  const usage = opencodeUsage()
   let balanceCount = 0
   const restore = installFetch(async (url) => {
     const text = String(url)
-    if (text.endsWith('/go/status')) return jsonResponse(responses.status)
-    if (text.endsWith('/activity/go')) return jsonResponse(responses.activity)
+    if (text.endsWith('/usage')) return jsonResponse(usage)
     if (text.endsWith('/user/balance')) {
       balanceCount += 1
       return jsonResponse({
