@@ -63,11 +63,13 @@ window.__ModuleLoader__.load({
       'source.deepseek': 'DeepSeek',
       'source.anthropic': 'Anthropic',
       'source.openai': 'OpenAI',
+      'source.codex': 'OpenAI Codex',
       'source.http': '自定义接口',
       'meter.fiveHour': '5 小时',
       'meter.week': '本周',
       'meter.month': '本月',
       'meter.monthCost': '本月花费',
+      'meter.windowHours': '{hours} 小时窗口',
       'meter.balance': '{currency} 余额',
       'meter.resetIn': '{time}后重置',
       'meter.resetUnknown': '重置时间未知',
@@ -79,6 +81,10 @@ window.__ModuleLoader__.load({
       'state.apiKey': 'API Key',
       'state.rejected': 'API Key 被拒绝，可能已过期',
       'state.adminKey': '该数据源需要 Admin API Key，普通 API Key 无法读取组织用量',
+      'state.codexMissing': '没有找到 Codex 登录凭据',
+      'state.codexMissingDetail': '在 DSH 里登录 openai-codex 或运行 codex login；也可以指定登录凭据文件。',
+      'state.codexExpired': 'Codex 登录已过期或被拒绝',
+      'state.codexExpiredDetail': '在 DSH 里用一次 openai-codex 模型刷新登录，或重新运行 codex login。',
       'state.failed': '额度读取失败',
       'state.config': '额度映射配置有误',
       'state.noData': '暂无额度数据',
@@ -134,10 +140,15 @@ window.__ModuleLoader__.load({
       'config.source.labelHint': '留空用驱动默认名。',
       'config.source.credential': '凭据引用',
       'config.source.credentialHint': '只填凭据名，不填密钥；留空用默认引用 {ref}。',
+      'config.source.credentialHintCodex': '可选：直接指定访问令牌的凭据引用；留空读取下面的登录凭据文件。',
       'config.source.baseUrl': '接口根地址',
       'config.source.baseUrlHint': '留空用默认地址。',
       'config.source.apiVersion': 'API 版本',
       'config.source.organization': '组织 ID',
+      'config.source.authFile': '登录凭据文件',
+      'config.source.authFileHint': '留空依次尝试 $DSH_HOME/.openai-codex-auth.json 和 ~/.codex/auth.json。',
+      'config.source.accountId': 'ChatGPT 账户 ID',
+      'config.source.accountIdHint': '可选；登录文件里有多个账号时用来指定其中一个。',
       'config.source.scale': '数值倍率',
       'config.source.budget': '月度预算',
       'config.source.budgetAmount': '金额',
@@ -199,11 +210,13 @@ window.__ModuleLoader__.load({
       'source.deepseek': 'DeepSeek',
       'source.anthropic': 'Anthropic',
       'source.openai': 'OpenAI',
+      'source.codex': 'OpenAI Codex',
       'source.http': 'Custom endpoint',
       'meter.fiveHour': '5 hours',
       'meter.week': 'This week',
       'meter.month': 'This month',
       'meter.monthCost': "This month's cost",
+      'meter.windowHours': '{hours}-hour window',
       'meter.balance': '{currency} balance',
       'meter.resetIn': 'resets in {time}',
       'meter.resetUnknown': 'reset time unknown',
@@ -215,6 +228,10 @@ window.__ModuleLoader__.load({
       'state.apiKey': 'API key',
       'state.rejected': 'API key rejected, it may have expired',
       'state.adminKey': 'This source needs an Admin API key; a regular API key cannot read organization usage',
+      'state.codexMissing': 'No Codex login was found',
+      'state.codexMissingDetail': 'Sign in to openai-codex in DSH or run codex login; you can also point to an auth file.',
+      'state.codexExpired': 'The Codex login expired or was rejected',
+      'state.codexExpiredDetail': 'Use an openai-codex model once in DSH to refresh the login, or run codex login again.',
       'state.failed': 'Could not read quota',
       'state.config': 'The quota mapping is misconfigured',
       'state.noData': 'No quota data',
@@ -270,10 +287,15 @@ window.__ModuleLoader__.load({
       'config.source.labelHint': 'Empty uses the driver’s default name.',
       'config.source.credential': 'Credential reference',
       'config.source.credentialHint': 'A reference name, never the secret; empty uses {ref}.',
+      'config.source.credentialHintCodex': 'Optional: a credential reference for the access token; empty reads the auth file below.',
       'config.source.baseUrl': 'Base URL',
       'config.source.baseUrlHint': 'Empty uses the default endpoint.',
       'config.source.apiVersion': 'API version',
       'config.source.organization': 'Organization ID',
+      'config.source.authFile': 'Auth file',
+      'config.source.authFileHint': 'Empty tries $DSH_HOME/.openai-codex-auth.json then ~/.codex/auth.json.',
+      'config.source.accountId': 'ChatGPT account ID',
+      'config.source.accountIdHint': 'Optional; selects one account when the auth file has several.',
       'config.source.scale': 'Value scale',
       'config.source.budget': 'Monthly budget',
       'config.source.budgetAmount': 'Amount',
@@ -737,6 +759,12 @@ window.__ModuleLoader__.load({
       } else if (code === 'credential-rejected') {
         text = t('state.rejected');
         detail = source.driver === 'anthropic-usage' || source.driver === 'openai-usage' ? t('state.adminKey') : null;
+      } else if (code === 'codex-auth-missing') {
+        text = t('state.codexMissing');
+        detail = t('state.codexMissingDetail');
+      } else if (code === 'codex-auth-expired') {
+        text = t('state.codexExpired');
+        detail = t('state.codexExpiredDetail');
       } else if (code === 'config') {
         text = t('state.config');
       }
@@ -758,6 +786,7 @@ window.__ModuleLoader__.load({
     function planNode(plan, t, localeId) {
       if (plan === null || typeof plan !== 'object') return null;
       const notes = [];
+      if (typeof plan.label === 'string' && plan.label !== '') notes.push(plan.label);
       if (typeof plan.endsAt === 'string' && plan.endsAt !== '') {
         const at = Date.parse(plan.endsAt);
         if (!Number.isNaN(at)) notes.push(at < Date.now() ? t('plan.expired') : t('plan.endsAt', { date: shortDate(plan.endsAt, localeId) }));
@@ -921,6 +950,14 @@ window.__ModuleLoader__.load({
         isHttp: false,
       },
       {
+        id: 'codex-usage',
+        label: 'OpenAI Codex',
+        labelKey: 'source.codex',
+        defaultCredential: null,
+        supportsBudget: false,
+        isHttp: false,
+      },
+      {
         id: 'http',
         label: 'HTTP',
         labelKey: 'source.http',
@@ -1004,7 +1041,8 @@ window.__ModuleLoader__.load({
         driver: source.driver,
         enabled: source.enabled !== false,
       };
-      for (const key of ['label', 'credential', 'baseUrl', 'apiVersion', 'organization']) {
+      for (const key of ['label', 'credential', 'baseUrl', 'apiVersion', 'organization', 'authFile', 'accountId']) {
+        if ((key === 'authFile' || key === 'accountId') && source.driver !== 'codex-usage') continue;
         const value = trimmed(source[key]);
         if (value !== '') out[key] = value;
       }
@@ -1381,7 +1419,7 @@ window.__ModuleLoader__.load({
           edit((next) => {
             const source = next.sources[index];
             source.driver = driver;
-            for (const key of ['budget', 'url', 'headers', 'query', 'mapping', 'auth', 'apiVersion', 'organization']) {
+            for (const key of ['budget', 'url', 'headers', 'query', 'mapping', 'auth', 'apiVersion', 'organization', 'authFile', 'accountId']) {
               delete source[key];
             }
           });
@@ -1673,7 +1711,9 @@ window.__ModuleLoader__.load({
               disabled,
               invalid: e(at('credential')) !== undefined,
             }),
-            t('config.source.credentialHint', { ref: info?.defaultCredential ?? '—' }),
+            info?.id === 'codex-usage'
+              ? t('config.source.credentialHintCodex')
+              : t('config.source.credentialHint', { ref: info?.defaultCredential ?? '—' }),
             e(at('credential')),
           ),
           field(
@@ -1705,6 +1745,35 @@ window.__ModuleLoader__.load({
                 disabled,
               }),
               t('config.source.baseUrlHint'),
+              undefined,
+            ),
+          );
+        }
+        if (source.driver === 'codex-usage') {
+          specific.push(
+            field(
+              `qwcfg-source-${index}-authFile`,
+              t('config.source.authFile'),
+              h(TextInput, {
+                id: `qwcfg-source-${index}-authFile`,
+                value: source.authFile ?? '',
+                onChange: (value) => setSourceField(index, 'authFile', value),
+                placeholder: '~/.dsh/.openai-codex-auth.json',
+                disabled,
+              }),
+              t('config.source.authFileHint'),
+              undefined,
+            ),
+            field(
+              `qwcfg-source-${index}-accountId`,
+              t('config.source.accountId'),
+              h(TextInput, {
+                id: `qwcfg-source-${index}-accountId`,
+                value: source.accountId ?? '',
+                onChange: (value) => setSourceField(index, 'accountId', value),
+                disabled,
+              }),
+              t('config.source.accountIdHint'),
               undefined,
             ),
           );

@@ -115,6 +115,37 @@ test('cleanDraft keeps HTTP fields and drops a budget on non-cost drivers', () =
   assert.equal('budget' in cleaned.sources[1], false)
 })
 
+test('cleanDraft keeps Codex auth fields only on codex sources', () => {
+  const cleaned = cleanDraft(
+    {
+      sources: [
+        {
+          id: 'codex',
+          driver: 'codex-usage',
+          enabled: true,
+          authFile: '~/.dsh/.openai-codex-auth.json',
+          accountId: 'acct-1',
+          baseUrl: '',
+        },
+        {
+          id: 'go',
+          driver: 'opencode-go',
+          enabled: true,
+          authFile: '~/.codex/auth.json',
+          accountId: 'acct-2',
+        },
+      ],
+      cache: {},
+      display: {},
+    },
+    FALLBACK_CATALOG,
+  )
+  assert.equal(cleaned.sources[0].authFile, '~/.dsh/.openai-codex-auth.json')
+  assert.equal(cleaned.sources[0].accountId, 'acct-1')
+  assert.equal('authFile' in cleaned.sources[1], false)
+  assert.equal('accountId' in cleaned.sources[1], false)
+})
+
 test('validateDraft accepts the default configuration', () => {
   assert.deepEqual(validateDraft(validDraft(), FALLBACK_CATALOG, {}), {})
 })

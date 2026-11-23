@@ -5,7 +5,8 @@
 
 收起时是右下角一枚小胶囊，显示配置指定的数据源和它的关键额度；点开后按数据源分组列出
 各源能提供的额度窗口、重置倒计时和今日用量。内置 **OpenCode Go**、**DeepSeek 余额**、
-**Anthropic 组织用量**、**OpenAI 组织用量**，以及一个按字段映射配置的 **通用 HTTP** 适配器。
+**Anthropic 组织用量**、**OpenAI 组织用量**、**OpenAI Codex 订阅额度**，以及一个按字段
+映射配置的 **通用 HTTP** 适配器。
 
 
 ## 环境要求
@@ -107,6 +108,11 @@
           amount: 100
           currency: USD
 
+      - id: codex
+        driver: codex-usage
+        # authFile: ~/.codex/auth.json # 可选，默认读 DSH / Codex CLI 的登录文件
+        # accountId: acct_xxx          # 可选，登录文件里有多个账号时指定
+
       - id: internal
         driver: http
         label: 内部网关
@@ -170,15 +176,15 @@
 | 字段 | 说明 |
 | --- | --- |
 | `id` | 必填，`^[a-z0-9][a-z0-9-]*$`，全局唯一 |
-| `driver` | `opencode-go` / `deepseek-balance` / `anthropic-usage` / `openai-usage` / `http` |
+| `driver` | `opencode-go` / `deepseek-balance` / `anthropic-usage` / `openai-usage` / `codex-usage` / `http` |
 | `enabled` | 默认 `true`；停用的源不发请求，也不出现在响应里 |
 | `label` | 展示名；缺省用适配器的默认名 |
 | `credential` | 凭据引用名（POSIX shell 标识符）；配置里只存名字，不存值 |
 | `baseUrl` | 覆盖默认 API 根地址 |
 
 其余字段按 driver 取用：`apiVersion`（Anthropic）、`organization`（OpenAI）、
-`budget`（Anthropic / OpenAI）、`url` / `headers` / `query` / `auth` / `mapping` / `scale`
-（通用 HTTP）。
+`authFile` / `accountId`（Codex）、`budget`（Anthropic / OpenAI）、
+`url` / `headers` / `query` / `auth` / `mapping` / `scale`（通用 HTTP）。
 
 配置会在插件加载时校验：重复 id、未知 driver、`http` 缺 `url`、`budget` 用在非成本型源、
 `pillSource` 指向不存在的 id，都会直接报错，而不是静默降级。
@@ -196,6 +202,7 @@
 | `deepseek-balance` | `DEEPSEEK_API_KEY` | DeepSeek 普通 API Key |
 | `anthropic-usage` | `ANTHROPIC_ADMIN_KEY` | **必须是 Admin API Key**（`sk-ant-admin01-…`） |
 | `openai-usage` | `OPENAI_ADMIN_KEY` | **必须是 Admin API Key**（`sk-admin-…`） |
+| `codex-usage` | 无 | 默认读本机 Codex 登录文件；也可用 `credential` 指向访问令牌 |
 | `http` | 无 | 是否必需由 `auth.type` 决定 |
 
 补凭据的三种方式：
@@ -216,6 +223,16 @@
 > Anthropic / OpenAI 的组织用量接口只认 Admin API Key。普通 API Key 会以
 > `credential-rejected` 失败，浮窗会给出对应提示。DeepSeek 官方只提供余额接口，
 > 没有公开的用量接口，所以 `deepseek-balance` 只显示余额。
+
+`codex-usage` 不走 API Key，而是复用本机已有的订阅登录：
+
+1. `$DSH_HOME/.openai-codex-auth.json`，`DSH_HOME` 未设置时是 `~/.dsh/.openai-codex-auth.json`；
+2. `$CODEX_HOME/auth.json`，未设置时是 `~/.codex/auth.json`。
+
+两份文件任选其一即可；DSH 和 Codex CLI 都登录过时会优先用 DSH 里的当前账号。也可以用
+数据源配置的 `authFile` 指定其他路径，或用 `credential` + `accountId` 直接引用访问令牌。
+插件只读登录文件，不写回、不刷新令牌；登录过期时在 DSH 里用一次 `openai-codex` 模型，
+或重新运行 `codex login` 即可，插件下一轮轮询会自动读到新令牌。
 
 ## 内置 driver
 
@@ -265,6 +282,23 @@
 - 月度成本 meter（`monthCost`）；配置 `budget` 时算百分比，不配时只显示金额。
 - `organization` 配置会加 `OpenAI-Organization` 头。
 - 同样只取第一页（`limit=31`），不跟随分页；单个接口失败时给 `partial` 提示。
+
+### `codex-usage`
+
+- 读取 ChatGPT 后端的订阅额度接口 `GET {baseUrl}/wham/usage`，默认
+  `baseUrl = https://chatgpt.com/backend-api`。
+- 需要已登录的 Codex 订阅凭据，默认从 DSH / Codex CLI 的登录文件读取，见[凭据](#凭据)。
+- 两个窗口：`rate_limit.primary_window`（5 小时）和 `rate_limit.secondary_window`（本周）→
+  meter `fiveHour` / `week`，单位 percent；收起态默认显示百分比更高的那个窗口。
+- 百分比直接来自接口的 `used_percent`；重置时间由 `reset_at`（Unix 秒）转换，缺失时用
+  `reset_after_seconds` 兜底。按 `limit_window_seconds` 识别 5 小时 / 7 天，未知窗口显示为
+  「N 小时窗口」。
+- 套餐名来自 `plan_type`，已知值显示为 `ChatGPT Plus` / `ChatGPT Pro` 等。
+- 接口没有按天的 tokens / 成本，所以这个源不显示今日用量；`credits`、额外模型限流和
+  reset credit 数量也暂不展示。
+- 登录文件缺失或过期时分别以 `codex-auth-missing` / `codex-auth-expired` 提示；
+  后者在 DSH 里用一次 `openai-codex` 模型或重新 `codex login` 即可刷新。
+- 这是 ChatGPT 的后端接口，不是公开稳定 API；接口变更时可用 `baseUrl` 覆盖或更新适配器。
 
 ## 通用 HTTP driver
 
@@ -409,7 +443,8 @@ GET /plugins/quota-widget?force=1  跳过缓存，强制刷新（浮窗里的刷
 
 - 顶层 `ok` 表示路由整体可用；单个源失败用 `source.ok: false` + `source.error`。
 - 错误 code：`missing-credential`（带 `ref` 引用名）、`credential-rejected`、`upstream`、
-  `config`。
+  `config`；Codex 源另有 `codex-auth-missing`（找不到登录文件）和 `codex-auth-expired`
+  （登录过期或被上游拒绝）。
 - 没有任何启用源时返回 `{ ok: false, error: { code: "no-sources" } }`。
 - 上游响应体、请求头和账号标识不下发；错误 message 不拼接上游响应体。
 - 所有源并发读取；全部成功用 `ttlMs` 缓存，任一失败用 `errorTtlMs` 缓存；并发请求合并成一次。
@@ -434,6 +469,8 @@ GET /plugins/quota-widget?force=1  跳过缓存，强制刷新（浮窗里的刷
 | 面板只有部分源 | 每个源独立报错；看对应源的错误块，缺凭据 / Admin Key 被拒最常见 |
 | 提示「未配置 XXX_API_KEY」 | 按[凭据](#凭据)补上该引用 |
 | 提示「API Key 被拒绝」 | key 过期、被撤销，或 Anthropic / OpenAI 用了普通 API Key 而不是 Admin Key |
+| 提示「没有找到 Codex 登录凭据」 | 先在 DSH 里登录 `openai-codex` 或运行 `codex login`；也可用 `authFile` 指定登录文件 |
+| 提示「Codex 登录已过期或被拒绝」 | 在 DSH 里用一次 `openai-codex` 模型刷新登录，或重新 `codex login`；仍失败就检查该账号是否有 Codex 订阅 |
 | 提示「额度映射配置有误」 | 检查 `mapping.meters` 路径、`fields` 字段名是否和上游 JSON 一致 |
 | 提示「余额不足」 | DeepSeek 余额不够，充值即可 |
 | 数字比控制台晚一点 | 宿主缓存 12 秒 + 前端 20 秒轮询，属正常；点刷新按钮可立即取 |
@@ -460,7 +497,7 @@ npm test
 node --check index.js client.js lib/*.js lib/adapters/*.js test/*.js
 ```
 
-测试用 Node 内置 `node:test`，覆盖路径解析、meter 归一化、配置校验（含配置页的草稿清洗/校验）、五个适配器、路由缓存与 volatile 热更新。
+测试用 Node 内置 `node:test`，覆盖路径解析、meter 归一化、配置校验（含配置页的草稿清洗/校验）、六个适配器、路由缓存与 volatile 热更新。
 
 改插件代码时：客户端会热替换；**宿主侧** `index.js` / `lib/` 的改动需要在插件页把本插件
 「停用 → 启用」一次。

@@ -116,7 +116,7 @@ test('driverCatalog describes every driver exactly once', () => {
   const catalog = driverCatalog()
   assert.deepEqual(
     catalog.map((entry) => entry.id),
-    ['opencode-go', 'deepseek-balance', 'anthropic-usage', 'openai-usage', 'http'],
+    ['opencode-go', 'deepseek-balance', 'anthropic-usage', 'openai-usage', 'codex-usage', 'http'],
   )
   const opencode = catalog.find((entry) => entry.id === 'opencode-go')
   assert.equal(opencode.label, 'OpenCode Go')
@@ -125,6 +125,13 @@ test('driverCatalog describes every driver exactly once', () => {
   assert.equal(opencode.defaultBaseUrl, 'https://opencode.ai/inference/go/v1')
   assert.equal(opencode.supportsBudget, false)
   assert.equal(opencode.isHttp, false)
+
+  const codex = catalog.find((entry) => entry.id === 'codex-usage')
+  assert.equal(codex.label, 'OpenAI Codex')
+  assert.equal(codex.labelKey, 'source.codex')
+  assert.equal(codex.defaultCredential, null)
+  assert.equal(codex.defaultBaseUrl, 'https://chatgpt.com/backend-api')
+  assert.equal(codex.supportsBudget, false)
 
   const http = catalog.find((entry) => entry.id === 'http')
   assert.equal(http.isHttp, true)

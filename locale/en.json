@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Quota widget",
-    "description": "Shows an expandable floating quota and usage widget in the corner of the Web UI, with built-in OpenCode Go, DeepSeek, Anthropic and OpenAI sources plus custom HTTP endpoints. Its opacity is adjustable with the scroll wheel."
+    "description": "Shows an expandable floating quota and usage widget in the corner of the Web UI, with built-in OpenCode Go, DeepSeek, Anthropic, OpenAI and Codex subscription sources plus custom HTTP endpoints. Its opacity is adjustable with the scroll wheel."
   }
 }
