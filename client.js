@@ -435,13 +435,14 @@ window.__ModuleLoader__.load({
 `;
 
     /**
-     * 百分比：小于 10% 保留一位小数，其余取整。
+     * 百分比：四舍五入到整数百分比。上游百分比本身没有小数位精度，
+     * 小数位只会制造虚假精度。
      * @param {number} value 0–100。
-     * @returns {string} `17.6%` 形式。
+     * @returns {string} `18%` 形式。
      */
     function formatPercent(value) {
       const n = Number.isFinite(value) ? Math.max(0, value) : 0;
-      return `${n < 10 ? n.toFixed(1) : Math.round(n)}%`;
+      return `${Math.round(n)}%`;
     }
 
     /**
@@ -2699,7 +2700,7 @@ window.__ModuleLoader__.load({
     exports.apply = apply;
     exports.inject = inject;
     // 纯函数给 Node 单测用；Loader 不读这些额外导出。
-    exports.__test = { cleanDraft, validateDraft, draftShape, FALLBACK_CATALOG, CSS };
+    exports.__test = { cleanDraft, validateDraft, draftShape, FALLBACK_CATALOG, CSS, formatPercent };
     return module.exports;
   },
 });

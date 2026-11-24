@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 
 /**
  * 浏览器 bundle 的 Node 冒烟测试：用一个最小 React / ModuleLoader 桩把
- * client.js 加载进来，只测与渲染无关的纯函数（草稿清洗与校验）。
+ * client.js 加载进来，只测与渲染无关的纯函数（草稿清洗、校验与格式化）。
  * 渲染仍以真实 Web 页面为准。
  */
 const React = {
@@ -30,7 +30,7 @@ globalThis.window = {
 
 await import('../client.js')
 
-const { cleanDraft, validateDraft, draftShape, FALLBACK_CATALOG, CSS } = plugin.__test
+const { cleanDraft, validateDraft, draftShape, FALLBACK_CATALOG, CSS, formatPercent } = plugin.__test
 
 /**
  * 一份合法草稿。
@@ -307,4 +307,14 @@ test('配置表单不用浮层底色，保存栏跟页面背景同色', () => {
   const primary = rules.find((rule) => rule.startsWith('.qwcfg-btn-primary{'))
   assert.ok(primary !== undefined, '主按钮必须有样式规则')
   assert.match(primary, /color:var\(--dsw-alias-label-primary-foreground\)/)
+})
+
+test('formatPercent rounds to whole percentages', () => {
+  assert.equal(formatPercent(4.4), '4%')
+  assert.equal(formatPercent(4.6), '5%')
+  assert.equal(formatPercent(17.5), '18%')
+  assert.equal(formatPercent(0.4), '0%')
+  assert.equal(formatPercent(100), '100%')
+  assert.equal(formatPercent(Number.NaN), '0%')
+  assert.equal(formatPercent(-3), '0%')
 })
